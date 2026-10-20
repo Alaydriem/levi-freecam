@@ -18,13 +18,14 @@
 #undef D3D12_RAYTRACING_GEOMETRY_DESC
 
 #include "bridge/RustBridge.h"
+#include "frame/FrameDriver.h"
+#include "input/EguiInput.h"
 #include "mod/FreecamMod.h"
+#include "render/D3D11StateBackup.h"
+#include "render/EguiRenderer.h"
+#include "render/FrameCapture.h"
+#include "render/GpuTimer.h"
 #include "render/InFlightCall.h"
-#include "render/OverlayDraw.h"
-
-#include <backends/imgui_impl_dx11.h>
-#include <backends/imgui_impl_win32.h>
-#include <imgui.h>
 
 #include "ll/api/io/Logger.h"
 #include "ll/api/memory/Hook.h"
@@ -60,6 +61,7 @@ constexpr wchar_t                   PROBE_CLASS[]               = L"LeviFreecamO
 constexpr std::chrono::milliseconds DRAIN_TIMEOUT{2000};
 constexpr std::chrono::milliseconds DRAIN_POLL{1};
 constexpr int                       QUEUE_WAIT_LOG_FRAMES = 600;
+constexpr float                     DEFAULT_DPI           = 96.0f;
 
 PresentFn             gOriginalPresent        = nullptr;
 Present1Fn            gOriginalPresent1       = nullptr;
@@ -94,8 +96,13 @@ thread_local int tPresentDepth = 0;
 
 // render state below is touched only inside Present and ResizeBuffers of the bound window's chain,
 // which the game never runs at the same time
-ImGuiContext*                                                gImGui        = nullptr;
+// the device is ready and bound to the game window
+bool                                                         gDeviceReady  = false;
 bool                                                         gDeviceFailed = false;
+// the UI renderer's shaders failed on this device; tried again only on a new device
+bool                                                         gRendererFailed = false;
+// the UI renderer dropped its textures; Rust must send them again before the next UI frame
+bool                                                         gUiResetPending = false;
 ComPtr<ID3D11Device>                                         gDevice;
 ComPtr<ID3D11DeviceContext>                                  gContext;
 ComPtr<ID3D11On12Device>                                     gDevice11On12;
@@ -105,7 +112,7 @@ std::array<ComPtr<ID3D11Resource>, MAX_BACK_BUFFERS>         gWrapped;
 std::array<ComPtr<ID3D11RenderTargetView>, MAX_BACK_BUFFERS> gTargets;
 
 // the window the overlay draws for, kept across a device rebuild; the device pointer is identity only,
-// kept alive by gDevice or gDevice11On12, and set only while the ImGui context exists
+// kept alive by gDevice or gDevice11On12, and set only while the device is ready
 bool  gBound       = false;
 HWND  gBoundWindow = nullptr;
 void* gBoundDevice = nullptr;
@@ -113,9 +120,22 @@ void* gBoundDevice = nullptr;
 int  gQueueWaitFrames = 0;
 bool gQueueWaitLogged = false;
 
+// gBoundWindow for readers on other threads
+std::atomic<HWND> gGameWindow{nullptr};
+
+// the UI frame failed and that was logged; cleared by the next frame that works, so a failure that lasts writes
+// one line, not one per Present
+bool gUiFrameFailureLogged = false;
+
+// one line with the render thread's id, for the live check of which thread runs what
+std::atomic<bool> gRenderThreadLogged{false};
+
 // the bound chain's back-buffer width in the high 32 bits and height in the low 32 bits, so a reader on
 // another thread never sees half of a resize; 0 until a chain is bound
 std::atomic<uint64_t> gBackBufferSize{0};
+
+// raised by one on each outermost Present that is not a test; Rust counts screenshot frames in presents
+std::atomic<uint32_t> gPresentCount{0};
 
 ll::io::Logger& logger() { return FreecamMod::getInstance().getSelf().getLogger(); }
 
@@ -144,6 +164,7 @@ void releaseQueue() {
 
 // every reference to a back buffer must be gone before ResizeBuffers, or it fails
 void releaseTargets() {
+    FrameCapture::release("the swap chain was resized or the device changed before the screenshot was read");
     for (UINT i = 0; i < MAX_BACK_BUFFERS; ++i) {
         gTargets[i].Reset();
         gWrapped[i].Reset();
@@ -249,47 +270,39 @@ bool createDevice11On12(IDXGISwapChain* chain) {
     return true;
 }
 
-// freecam's own context: whatever context was current before is current again on return
-bool createImGui(HWND window) {
-    ImGuiContext* previous = ImGui::GetCurrentContext();
-    gImGui                 = ImGui::CreateContext();
-    ImGui::SetCurrentContext(gImGui);
-    ImGuiIO& io     = ImGui::GetIO();
-    io.IniFilename  = nullptr;
-    io.LogFilename  = nullptr;
-    io.ConfigFlags |= ImGuiConfigFlags_NoMouse | ImGuiConfigFlags_NoMouseCursorChange | ImGuiConfigFlags_NoKeyboard;
-    io.Fonts->AddFontDefault();
-    bool platform = ImGui_ImplWin32_Init(window);
-    bool renderer = platform && ImGui_ImplDX11_Init(gDevice.Get(), gContext.Get());
-    if (!renderer) {
-        if (platform) ImGui_ImplWin32_Shutdown();
-        ImGui::DestroyContext(gImGui);
-        gImGui = nullptr;
-    }
-    ImGui::SetCurrentContext(previous);
-    return renderer;
+// drops the UI renderer's textures. Rust still thinks the renderer holds them, so the next UI frame first asks
+// for all of them again
+void releaseUiTextures() {
+    if (EguiRenderer::ready()) gUiResetPending = true;
+    EguiRenderer::releaseTextures();
 }
 
-void destroyImGui() {
-    if (!gImGui) return;
-    ImGuiContext* previous = ImGui::GetCurrentContext();
-    ImGui::SetCurrentContext(gImGui);
-    ImGui_ImplDX11_Shutdown();
-    ImGui_ImplWin32_Shutdown();
-    ImGui::DestroyContext(gImGui);
-    ImGui::SetCurrentContext(previous == gImGui ? nullptr : previous);
-    gImGui = nullptr;
+// drops every UI device object and the GPU timer's queries; used when the device goes away
+void releaseUiGpu() {
+    if (EguiRenderer::ready()) gUiResetPending = true;
+    EguiRenderer::release();
+    GpuTimer::release();
 }
 
-// drops the ImGui device objects, the targets, the D3D11On12 wrappers, the device and the queue
+// the renderer's device objects are made once per device, at the first Present on it
+void ensureRenderer() {
+    if (EguiRenderer::ready() || gRendererFailed || !gDevice) return;
+    if (EguiRenderer::init(gDevice.Get())) return;
+    gRendererFailed = true;
+    logger().error("overlay: the UI renderer could not start; the bar and path playback are unavailable this session");
+}
+
+// drops the UI renderer, the targets, the D3D11On12 wrappers, the device and the queue
 void releaseDevice() {
-    destroyImGui();
+    releaseUiGpu();
     releaseTargets();
     gDevice11On12.Reset();
     gContext.Reset();
     gDevice.Reset();
     releaseQueue();
     gDeviceFailed    = false;
+    gDeviceReady     = false;
+    gRendererFailed  = false;
     gBoundDevice     = nullptr;
     gQueueWaitFrames = 0;
     gQueueWaitLogged = false;
@@ -299,11 +312,12 @@ void releaseBinding() {
     releaseDevice();
     gBound       = false;
     gBoundWindow = nullptr;
+    gGameWindow.store(nullptr);
     gBackBufferSize.store(0, std::memory_order_relaxed);
 }
 
 bool ensureDevice(IDXGISwapChain* chain, HWND window, void* device) {
-    if (gImGui) return true;
+    if (gDeviceReady) return true;
     if (gDeviceFailed) return false;
     if (!gDevice) {
         if (SUCCEEDED(chain->GetDevice(IID_PPV_ARGS(&gDevice)))) {
@@ -313,13 +327,11 @@ bool ensureDevice(IDXGISwapChain* chain, HWND window, void* device) {
             return false;
         }
     }
-    if (!createImGui(window)) {
-        gDeviceFailed = true;
-        logger().error("overlay: could not start ImGui on the game window");
-        return false;
-    }
+    EguiInput::install(window);
+    gDeviceReady = true;
     gBound       = true;
     gBoundWindow = window;
+    gGameWindow.store(window);
     gBoundDevice = device;
     logDeviceStep(gDevice11On12 ? "device ready (D3D12 through D3D11On12)" : "device ready (D3D11)");
     return true;
@@ -342,34 +354,52 @@ bool acceptChain(IDXGISwapChain* chain) {
     if (FAILED(chain->GetDesc(&desc))) return false;
     if (gBound && desc.OutputWindow != gBoundWindow) return false;
     void* device = chainDevice(chain);
-    if (gImGui && device != gBoundDevice) {
+    if (gDeviceReady && device != gBoundDevice) {
         logger().info("overlay: the game window has a new device; the overlay device is built again");
         releaseDevice();
     }
     if (!ensureDevice(chain, desc.OutputWindow, device)) return false;
+    // a new or resized chain drops the UI textures too, so they come again from Rust
     releaseTargets();
-    return createTargets(chain);
+    releaseUiTextures();
+    if (!createTargets(chain)) return false;
+    ensureRenderer();
+    return true;
 }
 
-void drawWrapped(UINT index) {
+// the GPU timer brackets only the UI draw, and runs only when Rust asks for it
+void drawUi(FcUiFrame const& frame) {
+    float width  = 0.0f;
+    float height = 0.0f;
+    OverlayHook::backBufferSize(width, height);
+    bool measure = frame.measure_gpu != 0;
+    if (measure) GpuTimer::begin(gContext.Get(), gDevice.Get());
+    EguiRenderer::draw(gContext.Get(), gDevice.Get(), frame, width, height);
+    if (measure) GpuTimer::end(gContext.Get());
+}
+
+void drawWrapped(UINT index, FcUiFrame const& frame) {
     ID3D11Resource* wrapped[] = {gWrapped[index].Get()};
     gDevice11On12->AcquireWrappedResources(wrapped, 1);
     ID3D11RenderTargetView* target = gTargets[index].Get();
     gContext->OMSetRenderTargets(1, &target, nullptr);
-    ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+    drawUi(frame);
     gContext->OMSetRenderTargets(0, nullptr, nullptr);
     gDevice11On12->ReleaseWrappedResources(wrapped, 1);
     gContext->Flush();
 }
 
-// the D3D11 context is the game's own: put its render targets back after drawing
-void drawNative() {
+// the D3D11 context is the game's own: put its render targets and pipeline state back after drawing
+void drawNative(FcUiFrame const& frame) {
     std::array<ID3D11RenderTargetView*, D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT> saved{};
     ID3D11DepthStencilView*                                                     savedDepth = nullptr;
     gContext->OMGetRenderTargets(static_cast<UINT>(saved.size()), saved.data(), &savedDepth);
-    ID3D11RenderTargetView* target = gTargets[0].Get();
-    gContext->OMSetRenderTargets(1, &target, nullptr);
-    ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+    {
+        D3D11StateBackup        state(gContext.Get());
+        ID3D11RenderTargetView* target = gTargets[0].Get();
+        gContext->OMSetRenderTargets(1, &target, nullptr);
+        drawUi(frame);
+    }
     gContext->OMSetRenderTargets(static_cast<UINT>(saved.size()), saved.data(), savedDepth);
     for (ID3D11RenderTargetView* view : saved) {
         if (view) view->Release();
@@ -386,57 +416,132 @@ bool currentBackBuffer(IDXGISwapChain* chain, UINT& index) {
     return true;
 }
 
-// ImGui coordinates are back-buffer pixels, the same pixels Rust projects the overlay into
-void useBackBufferSize() {
-    float width  = 0.0f;
-    float height = 0.0f;
-    OverlayHook::backBufferSize(width, height);
-    if (width > 0.0f && height > 0.0f) ImGui::GetIO().DisplaySize = ImVec2{width, height};
+double secondsNow() {
+    static double const frequency = [] {
+        LARGE_INTEGER value{};
+        QueryPerformanceFrequency(&value);
+        return static_cast<double>(value.QuadPart);
+    }();
+    LARGE_INTEGER counter{};
+    QueryPerformanceCounter(&counter);
+    return static_cast<double>(counter.QuadPart) / frequency;
 }
 
-// a hidden overlay costs no ImGui frame and no D3D draw; the view borrows Rust's buffers until the next fc_overlay or
-// fc_destroy, so it is used only inside this Present
-bool fetchVisibleOverlay(FcOverlayView& view) {
-    if (OverlayHook::shuttingDown()) return false;
-    const FcHandle* handle = RustBridge::handle();
-    if (!handle) return false;
-    return fc_overlay(handle, &view) == FC_STATUS_OK && view.visible != 0;
+// UI coordinates are back-buffer pixels, the same pixels the input bridge reads from the window
+FcUiFrameInput uiFrameInput() {
+    FcUiFrameInput input{};
+    OverlayHook::backBufferSize(input.width, input.height);
+    UINT dpi               = gBoundWindow ? GetDpiForWindow(gBoundWindow) : 0;
+    input.pixels_per_point = dpi != 0 ? static_cast<float>(dpi) / DEFAULT_DPI : 1.0f;
+    input.time_seconds     = secondsNow();
+    input.gpu_ms           = GpuTimer::lastMs();
+    return input;
 }
 
-// the device and targets are built at the first Present, before the overlay is ever shown, so no D3D device is
-// created mid-game; acceptChain is one pointer compare for the bound chain
+// after the renderer dropped its textures, Rust sends every texture again in the next frame
+bool resetUiTexturesIfPending(const FcHandle* handle) {
+    if (!gUiResetPending) return true;
+    if (fc_ui_reset_textures(handle) != FC_STATUS_OK) return false;
+    gUiResetPending = false;
+    return true;
+}
+
+void noteRenderThread() {
+    if (gRenderThreadLogged.exchange(true)) return;
+    logger().info("overlay: UI frames run on thread {}", GetCurrentThreadId());
+}
+
+// true when the frame is usable; a failure is logged once until a frame works again
+bool runUiFrame(const FcHandle* handle, FcUiFrameInput const& input, FcUiFrame& frame) {
+    FcStatus status = fc_ui_frame(handle, &input, &frame);
+    if (status == FC_STATUS_OK) {
+        gUiFrameFailureLogged = false;
+        return true;
+    }
+    if (!gUiFrameFailureLogged) {
+        logger().warn("overlay: the UI frame failed with status {}; the UI is not drawn until it works again", static_cast<int>(status));
+    }
+    gUiFrameFailureLogged = true;
+    return false;
+}
+
+void captureWrapped(UINT index) {
+    if (index >= gTargetCount || !gWrapped[index]) {
+        FrameCapture::refuse("the D3D12 back buffer is not wrapped");
+        return;
+    }
+    ID3D11Resource* wrapped[] = {gWrapped[index].Get()};
+    gDevice11On12->AcquireWrappedResources(wrapped, 1);
+    FrameCapture::take(gDevice.Get(), gContext.Get(), wrapped[0]);
+    gDevice11On12->ReleaseWrappedResources(wrapped, 1);
+    gContext->Flush();
+}
+
+// a D3D11 flip chain always shows its current back buffer as buffer 0; the copy goes on the game's own context,
+// and changes none of its bindings
+void captureNative(IDXGISwapChain* chain) {
+    ComPtr<ID3D11Texture2D> buffer;
+    if (FAILED(chain->GetBuffer(0, IID_PPV_ARGS(&buffer)))) {
+        FrameCapture::refuse("the D3D11 back buffer could not be read");
+        return;
+    }
+    FrameCapture::take(gDevice.Get(), gContext.Get(), buffer.Get());
+}
+
+// reads a finished screenshot copy, then copies this Present's back buffer when a screenshot waits for it. It runs
+// before the UI draw, so a copy never holds mod drawing
+void serviceCapture(IDXGISwapChain* chain) {
+    FrameCapture::poll(gContext.Get());
+    if (!FrameCapture::wanted()) return;
+    UINT index = 0;
+    if (!currentBackBuffer(chain, index)) {
+        FrameCapture::refuse("the back buffer index could not be read");
+        return;
+    }
+    if (gDevice11On12) {
+        captureWrapped(index);
+    } else {
+        captureNative(chain);
+    }
+}
+
+// a hidden UI costs no UI frame and no D3D draw. fc_ui_frame runs only when the frame can be drawn, so no texture
+// change Rust hands over is lost; its buffers are borrowed until the next fc_ui_frame, so they are used only here
 void renderFrame(IDXGISwapChain* chain) {
     if (!acceptChain(chain)) return;
-    FcOverlayView view{};
-    if (!fetchVisibleOverlay(view)) return;
+    serviceCapture(chain);
+    if (FrameDriver::uiHidden() || !FrameDriver::uiVisible() || OverlayHook::shuttingDown() || !EguiRenderer::ready()) return;
+    const FcHandle* handle = RustBridge::handle();
+    if (!handle) return;
     UINT index = 0;
     if (!currentBackBuffer(chain, index) || index >= gTargetCount || !gTargets[index]) return;
-    ImGuiContext* previous = ImGui::GetCurrentContext();
-    ImGui::SetCurrentContext(gImGui);
-    ImGui_ImplDX11_NewFrame();
-    ImGui_ImplWin32_NewFrame();
-    useBackBufferSize();
-    ImGui::NewFrame();
-    OverlayDraw::draw(*ImGui::GetForegroundDrawList(), view);
-    ImGui::Render();
+    noteRenderThread();
+    if (!resetUiTexturesIfPending(handle)) return;
+    FcUiFrameInput input = uiFrameInput();
+    FcUiFrame      frame{};
+    if (!runUiFrame(handle, input, frame)) return;
     if (gDevice11On12) {
-        drawWrapped(index);
+        drawWrapped(index, frame);
     } else {
-        drawNative();
+        drawNative(frame);
     }
-    ImGui::SetCurrentContext(previous);
+    EguiInput::setCursor(frame.cursor);
 }
 
 void drawOverlay(IDXGISwapChain* chain, UINT flags) {
     if (tPresentDepth != 1 || (flags & DXGI_PRESENT_TEST) != 0 || gShuttingDown.load()) return;
+    uint32_t presentCount = gPresentCount.fetch_add(1, std::memory_order_relaxed) + 1;
+    FrameCapture::expire(presentCount);
     renderFrame(chain);
 }
 
 bool isBoundChain(IDXGISwapChain* chain) { return chain != nullptr && chain == gTargetChain; }
 
-// only the bound chain's targets are ours to drop; other chains resize untouched
+// only the bound chain's targets and UI textures are ours to drop; other chains resize untouched
 void releaseTargetsFor(IDXGISwapChain* chain) {
-    if (isBoundChain(chain)) releaseTargets();
+    if (!isBoundChain(chain)) return;
+    releaseTargets();
+    releaseUiTextures();
 }
 
 HRESULT STDMETHODCALLTYPE onPresent(IDXGISwapChain* chain, UINT sync, UINT flags) {
@@ -618,6 +723,10 @@ void OverlayHook::backBufferSize(float& width, float& height) {
     height          = static_cast<float>(packed & UINT32_MAX);
 }
 
+HWND OverlayHook::gameWindow() { return gGameWindow.load(); }
+
+uint32_t OverlayHook::presentCount() { return gPresentCount.load(std::memory_order_relaxed); }
+
 void OverlayHook::arm() {
     std::scoped_lock lock(gInstallMutex);
     if (!gInstalled.load() && !gLeaked) gAttempted.store(false);
@@ -631,7 +740,7 @@ bool OverlayHook::init() {
     gShuttingDown.store(false);
     if (!installHooks()) {
         unhookAll();
-        logger().warn("overlay: could not hook the swap chain; freecam runs without its overlay");
+        logger().warn("overlay: could not hook the swap chain; the bar and path playback are unavailable this session");
         return false;
     }
     gInstalled.store(true);

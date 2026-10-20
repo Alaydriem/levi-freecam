@@ -6,6 +6,8 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#define UiHandoff_ACTION_CAPACITY 16
+
 typedef enum FcStatus {
   FC_STATUS_OK = 0,
   FC_STATUS_INVALID_ARGUMENT = 1,
@@ -14,6 +16,11 @@ typedef enum FcStatus {
 } FcStatus;
 
 typedef struct FcHandle FcHandle;
+
+typedef struct FcStr {
+  const uint8_t *ptr;
+  uintptr_t len;
+} FcStr;
 
 typedef struct FcVec3 {
   float x;
@@ -46,9 +53,50 @@ typedef struct FcFrameStatus {
   struct FcVec3 game_camera_position;
   float fov_y_degrees;
   float aspect;
-  float screen_width;
-  float screen_height;
+  float last_shape_send_us;
+  uint32_t handler_generation;
+  /**
+   * raised by one on each Present; a screenshot counts its frames in presents, not in fc_frame calls
+   */
+  uint32_t present_count;
 } FcFrameStatus;
+
+typedef struct FcMarkerEntry {
+  uint64_t id;
+  /**
+   * 0 remove (only `id` is used), 1 line, 2 box, 3 arrow
+   */
+  uint8_t kind;
+  /**
+   * start of a line or arrow, the minimum corner of a box
+   */
+  struct FcVec3 location;
+  /**
+   * end of a line or arrow, the size of a box
+   */
+  struct FcVec3 end;
+  /**
+   * ARGB
+   */
+  uint32_t color;
+  int32_t dimension;
+} FcMarkerEntry;
+
+typedef struct FcRayRequest {
+  /**
+   * 1 when the shim casts the ray and answers with fc_ray_result before the second next fc_frame
+   */
+  uint8_t active;
+  struct FcVec3 origin;
+  /**
+   * unit vector
+   */
+  struct FcVec3 direction;
+  /**
+   * blocks
+   */
+  float max_distance;
+} FcRayRequest;
 
 typedef struct FcFrameOutput {
   uint8_t camera;
@@ -57,46 +105,241 @@ typedef struct FcFrameOutput {
   struct FcPose override_pose;
   uint8_t gui;
   uint8_t block_input;
-  uint8_t show_overlay;
+  /**
+   * 0 none, 1 release the mouse to the user, 2 grab it back for the game, 3 grab it for a look drag and keep the
+   * cursor position, 4 release it after a look drag and put the cursor back at the kept position
+   */
+  uint8_t mouse;
+  /**
+   * 1 while the UI is drawn; fc_ui_frame is called only then
+   */
+  uint8_t ui_visible;
+  /**
+   * 1 while the cursor is free and UI input goes to fc_ui_event
+   */
+  uint8_t cursor_mode;
+  /**
+   * 1 while a look drag holds the mouse in bar mode: the game may grab the mouse, the cursor stays hidden, and
+   * pointer moves do not go to fc_ui_event
+   */
+  uint8_t look_drag;
+  /**
+   * 1 while freecam controls the camera, until the controller is fully off
+   */
+  uint8_t camera_owned;
+  /**
+   * the marker changes to deliver this frame, in order; borrowed from the handle and valid until the next
+   * fc_frame or fc_destroy. Null when marker_count is 0
+   */
+  const struct FcMarkerEntry *markers;
+  uintptr_t marker_count;
+  struct FcRayRequest ray;
+  /**
+   * 1 while a screenshot is under way: do not draw the UI, so the capture is clean; core removes the markers itself
+   */
+  uint8_t hide_ui;
+  /**
+   * 1 when the frame presented now must be captured; answer with fc_capture_taken and capture_sequence
+   */
+  uint8_t capture_active;
+  /**
+   * the request to echo in fc_capture_taken and fc_capture_written; meaningful only when capture_active is 1
+   */
+  uint32_t capture_sequence;
 } FcFrameOutput;
-
-typedef struct FcStr {
-  const uint8_t *ptr;
-  uintptr_t len;
-} FcStr;
 
 typedef void (*FcLogFn)(uint8_t level, const uint8_t *message, uintptr_t len);
 
-typedef struct FcOverlaySegment {
-  float x0;
-  float y0;
-  float x1;
-  float y1;
-} FcOverlaySegment;
-
-typedef struct FcOverlayMarker {
+/**
+ * One input event for the UI. `x` and `y` are physical pixels from the top left of the game window. The fields read
+ * depend on `kind`:
+ * - 0 pointer moved: `x`, `y`
+ * - 1 pointer button: `x`, `y`, `button` (0 left, 1 right, 2 middle), `pressed`
+ * - 2 wheel, in notches (one notch is 1.0, WHEEL_DELTA): `x` is horizontal, positive scrolls left
+ *   (-WM_MOUSEHWHEEL delta / 120); `y` is vertical, positive scrolls up (WM_MOUSEWHEEL delta / 120)
+ * - 3 key: `vk` (a Windows virtual-key code), `pressed`
+ * - 4 pointer gone
+ * - 5 focus lost
+ */
+typedef struct FcUiEvent {
+  uint32_t kind;
   float x;
   float y;
-  float wedge_x;
-  float wedge_y;
-  uint32_t number;
-  uint8_t is_last;
-} FcOverlayMarker;
+  uint32_t button;
+  uint8_t pressed;
+  uint32_t vk;
+} FcUiEvent;
+/**
+ * The highest `button` value: 0 left, 1 right, 2 middle.
+ */
+#define FcUiEvent_MAX_BUTTON 2
 
-typedef struct FcOverlayView {
-  const struct FcOverlaySegment *segments;
-  uint32_t segment_count;
-  const struct FcOverlayMarker *markers;
-  uint32_t marker_count;
-  uint32_t point_count;
-  float shot_seconds;
-  uint8_t visible;
-} FcOverlayView;
+/**
+ * What the UI needs to know for one frame.
+ */
+typedef struct FcUiFrameInput {
+  /**
+   * Physical pixels
+   */
+  float width;
+  /**
+   * Physical pixels
+   */
+  float height;
+  /**
+   * Zero, negative or NaN means 1.0
+   */
+  float pixels_per_point;
+  /**
+   * A clock that only goes forward
+   */
+  double time_seconds;
+  /**
+   * GPU time of the last UI draw; < 0 means none
+   */
+  float gpu_ms;
+} FcUiFrameInput;
+
+/**
+ * One UI vertex, 20 bytes: position float2, uv float2, colour R8G8B8A8_UNORM (premultiplied alpha, gamma space).
+ */
+typedef struct FcUiVertex {
+  /**
+   * Physical pixels
+   */
+  float x;
+  /**
+   * Physical pixels
+   */
+  float y;
+  float u;
+  float v;
+  uint8_t rgba[4];
+} FcUiVertex;
+
+/**
+ * One draw call: `index_count` indices from `index_offset`, each plus `vertex_offset`, with `texture` bound and the
+ * scissor set to `clip`.
+ */
+typedef struct FcUiDraw {
+  /**
+   * Physical pixels: min x, min y, max x, max y
+   */
+  float clip[4];
+  uint64_t texture;
+  uint32_t index_offset;
+  uint32_t index_count;
+  uint32_t vertex_offset;
+} FcUiDraw;
+
+/**
+ * One RGBA8 UNORM texture upload of `width` x `height` pixels: `byte_len` bytes at `rgba`, rows packed with no
+ * padding.
+ *
+ * `full` 1: create the texture at this size. When the id is already held, release the old texture and create it
+ * again: after fc_ui_reset_textures the font texture comes again in full with the same id. `full` 0: update the box
+ * at `x`, `y` of a texture already held.
+ *
+ * `rgba` is null and `byte_len` 0 only when the bytes are missing, which the UI runtime does not produce; skip such a
+ * delta.
+ */
+typedef struct FcUiTextureDelta {
+  uint64_t texture;
+  uint8_t full;
+  uint32_t x;
+  uint32_t y;
+  uint32_t width;
+  uint32_t height;
+  const uint8_t *rgba;
+  uintptr_t byte_len;
+} FcUiTextureDelta;
+
+/**
+ * One UI frame. Apply `textures` in array order before drawing, draw `draws` in order, and release the `freed`
+ * texture ids after drawing. When one frame changes more than one texture, the order between different texture ids
+ * is not fixed; deltas for the same id keep their order. Every pointer is valid for its count and borrows buffers the
+ * handle owns (see fc_ui_frame for how long).
+ */
+typedef struct FcUiFrame {
+  const struct FcUiVertex *vertices;
+  uint32_t vertex_count;
+  const uint32_t *indices;
+  uint32_t index_count;
+  const struct FcUiDraw *draws;
+  uint32_t draw_count;
+  const struct FcUiTextureDelta *textures;
+  uint32_t texture_count;
+  const uint64_t *freed;
+  uint32_t freed_count;
+  /**
+   * 1: the pointer is over the UI, or the UI is using it. Information only: the handle already hands it to core,
+   * where a right press over the UI starts no look drag. The shim passes mouse messages on to the game, and core
+   * keeps game clicks out through fc_mouse_button while freecam is on
+   */
+  uint8_t wants_pointer;
+  /**
+   * 0 default arrow, 1 hand
+   */
+  uint8_t cursor;
+  /**
+   * 1: over ui.maxVertices, no geometry; textures are still filled
+   */
+  uint8_t skipped;
+  /**
+   * 1: time the UI draw on the GPU and pass it as gpu_ms next frame
+   */
+  uint8_t measure_gpu;
+} FcUiFrame;
 
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus
 
+/**
+ * Answers the capture that an fc_frame asked for with `capture_active`, as soon as the frame is copied. Call it from
+ * the game thread once for every request, with that frame's `capture_sequence`: `ok` is 1 when the frame was copied
+ * for the PNG writer, 0 when the capture failed or was refused (a write still pending). The mod's drawing comes back
+ * after this call; ok = 0 shows the failed toast. An answer more than 10 presents after the request, or with a wrong
+ * sequence, changes nothing: the request has timed out with the failed toast. After ok = 1, answer the same sequence
+ * once more with fc_capture_written.
+ */
+enum FcStatus fc_capture_taken(struct FcHandle *handle,
+                               uint32_t sequence,
+                               uint8_t ok);
+
+/**
+ * Answers a capture that fc_capture_taken reported with ok = 1, once its PNG is written. Call it from the game thread
+ * once for that sequence: `ok` is 1 when the file was saved, 0 when the write failed. `name_ptr` and `name_len` are
+ * the UTF-8 file name without the folder, not null-terminated and borrowed for the call; they are ignored when `ok`
+ * is 0 and may be null with a length of 0. There is no frame timeout, and no new screenshot starts until this answer
+ * arrives. An answer with no taken capture waiting for it changes nothing. A null handle, or a name that is not UTF-8,
+ * gives FC_STATUS_INVALID_ARGUMENT and reaches nothing.
+ */
+enum FcStatus fc_capture_written(struct FcHandle *handle,
+                                 uint32_t sequence,
+                                 uint8_t ok,
+                                 const uint8_t *name_ptr,
+                                 uintptr_t name_len);
+
+/**
+ * Writes the screenshot folder from `screenshot.folder` in config into `out`, as UTF-8 that is not expanded:
+ * environment variables such as `%USERPROFILE%` are still in it, and the shim expands them and creates the folder.
+ * A blank value in config gives the default `%USERPROFILE%\Pictures\Screenshots`. On FC_STATUS_OK `out` borrows bytes
+ * the handle owns; they are not null-terminated and stay valid and unchanged until fc_destroy.
+ */
+enum FcStatus fc_screenshot_folder(const struct FcHandle *handle,
+                                   struct FcStr *out);
+
+/**
+ * Writes what the shim does this frame into `out`. Call it from the game thread. It never waits on the UI: it takes
+ * the UI actions before the core frame and publishes the UI snapshot after it, each through a hand-off that is held
+ * only for a copy. When the render thread holds the hand-off at that moment, that swap moves to the next frame.
+ *
+ * On FC_STATUS_OK, `out->markers` points to `out->marker_count` entries the handle owns. They stay valid until the
+ * next fc_frame or fc_destroy on the same handle; the other exports do not change them. Deliver them in order, then
+ * report the time it took in the next frame's `last_shape_send_us`. Skip the batch while no ClientNetworkHandler is
+ * captured: core sends nothing while `handler_generation` is 0.
+ */
 enum FcStatus fc_frame(const struct FcHandle *handle,
                        const struct FcFrameStatus *status,
                        struct FcFrameOutput *out);
@@ -114,15 +357,67 @@ enum FcStatus fc_server_instruction(const struct FcHandle *handle, uint8_t kind)
 
 struct FcHandle *fc_create(const struct FcStr *config_file, FcLogFn log);
 
+/**
+ * Frees the handle; the handle must not be used again. Every buffer borrowed from fc_ui_frame, fc_frame
+ * or fc_markers_shutdown is invalid after this call.
+ */
 void fc_destroy(struct FcHandle *handle);
 
 /**
- * Fills `out` with the path geometry to draw this frame. On Ok the pointers in `out` are non-null, are
- * valid for `segment_count` and `marker_count` elements, borrow buffers the handle owns, and stay valid
- * until the next fc_overlay or fc_destroy call on the same handle.
+ * Answers the ray that the last fc_frame asked for in `ray`. Call it from the game thread after that fc_frame and
+ * before the second next one; a later answer, or an answer with no ray waiting, changes nothing. `hit` is 1 when the
+ * ray hit a block at (x, y, z), 0 when it hit nothing (the position is then ignored).
  */
-enum FcStatus fc_overlay(const struct FcHandle *handle,
-                         struct FcOverlayView *out);
+enum FcStatus fc_ray_result(struct FcHandle *handle,
+                            uint8_t hit,
+                            float x,
+                            float y,
+                            float z);
+
+/**
+ * Writes a remove for every marker still in the world into `out` and `count`, ignoring `markers.maxPerSend`. Call it
+ * from the game thread before fc_destroy, while the ClientNetworkHandler is still captured, and deliver every entry.
+ * Afterwards core holds no live marker. On FC_STATUS_OK `*out` points to `*count` entries the handle owns (null when
+ * `*count` is 0). They stay valid until the next fc_markers_shutdown or fc_destroy on the same handle; fc_frame does
+ * not change them.
+ */
+enum FcStatus fc_markers_shutdown(struct FcHandle *handle,
+                                  const struct FcMarkerEntry **out,
+                                  uintptr_t *count);
+
+/**
+ * Queues one UI input event for the next fc_ui_frame. Call it from the window thread, only while cursor mode is on.
+ * It never blocks: the queue is lock-free and holds `ui.eventQueueCapacity` events; when it is full the oldest event
+ * is dropped and counted in telemetry. An unknown `kind`, or a `button` above 2, gives FC_STATUS_INVALID_ARGUMENT.
+ */
+enum FcStatus fc_ui_event(const struct FcHandle *handle,
+                          const struct FcUiEvent *event);
+
+/**
+ * Runs one UI frame and fills `out`. Call it from the render thread, once per Present, while the last fc_frame said
+ * `ui_visible`. It drains the queued events and draws the snapshot the last fc_frame published.
+ *
+ * On FC_STATUS_OK every pointer in `out` is valid for its count, borrows buffers the handle owns, and stays valid
+ * until the next fc_ui_frame or fc_destroy on the same handle. fc_frame, fc_ui_event and fc_ui_reset_textures do not
+ * change them. A pointer with a count of 0 must not be read.
+ *
+ * Apply `textures` before drawing and release `freed` after. When one frame changes more than one texture, the order
+ * between different texture ids is not fixed. A full delta for an id the renderer already holds replaces that
+ * texture. When `skipped` is 1 the frame went over `ui.maxVertices`: it has no vertices, indices or draws, but its
+ * texture changes are present and must still be applied.
+ */
+enum FcStatus fc_ui_frame(const struct FcHandle *handle,
+                          const struct FcUiFrameInput *input,
+                          struct FcUiFrame *out);
+
+/**
+ * Makes the next fc_ui_frame send every texture again in full, the font atlas included, with the same ids. Call it
+ * from the render thread only after the renderer has released its GPU textures (device loss, or a swap-chain
+ * recreate that dropped them). The renderer then treats each full delta as create-or-replace. The reset restarts
+ * the UI's state: hover animations restart, and a mouse button held during the reset loses its press, so that click
+ * does not complete.
+ */
+enum FcStatus fc_ui_reset_textures(const struct FcHandle *handle);
 
 #ifdef __cplusplus
 }  // extern "C"

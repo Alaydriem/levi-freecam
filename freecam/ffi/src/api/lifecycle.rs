@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 
 use freecam_core::config::ConfigLoader;
-use freecam_core::services::FreecamController;
 
 use crate::services::{FcBoundary, FcHandle, LogBridge};
 use crate::types::{FcLogFn, FcStatus, FcStr};
@@ -16,11 +15,12 @@ pub extern "C" fn fc_create(config_file: *const FcStr, log: FcLogFn) -> *mut FcH
         // SAFETY: the FcStr points to bytes the shim owns for the call
         let Some(path) = (unsafe { FcBoundary::text(path) }) else { return std::ptr::null_mut() };
         let config = ConfigLoader::load(&PathBuf::from(path));
-        Box::into_raw(Box::new(FcHandle::new(FreecamController::new(config))))
+        Box::into_raw(Box::new(FcHandle::new(config)))
     })
 }
 
-// frees the handle; the handle must not be used again
+/// Frees the handle; the handle must not be used again. Every buffer borrowed from fc_ui_frame, fc_frame
+/// or fc_markers_shutdown is invalid after this call.
 #[unsafe(no_mangle)]
 pub extern "C" fn fc_destroy(handle: *mut FcHandle) {
     let _ = FcBoundary::guard(|| {

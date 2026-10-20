@@ -20,6 +20,12 @@ public:
     bool disable();
 
 private:
+    // asks Rust for a remove of every marker still in the world and delivers it while the handler is captured
+    void removeMarkers();
+
+    // reads screenshot.folder from Rust, expands it and gives it to the PNG writer
+    void configureScreenshots();
+
     ll::mod::NativeMod& mSelf;
 };
 

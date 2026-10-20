@@ -45,7 +45,7 @@ pub extern "C" fn fc_mouse_button(handle: *const FcHandle, button: u8, data: i8,
         else {
             return FcStatus::InvalidArgument;
         };
-        match handle.with_controller(|controller| controller.on_mouse_button(button, data)) {
+        match handle.mouse_button(button, data) {
             Some(consumed) => {
                 *consume = u8::from(consumed);
                 FcStatus::Ok

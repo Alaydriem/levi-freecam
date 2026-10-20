@@ -3,6 +3,6 @@ pub enum InputAction {
     ToggleFreecam,
     ToggleSmooth,
     AddPoint,
-    UndoPoint,
-    TogglePlayback,
+    DeletePoint,
+    ToggleCursor,
 }

@@ -1,46 +1,45 @@
 use freecam_core::services::FreecamController;
-use freecam_core::services::path_store::PATH_CAPACITY;
-use freecam_core::structs::overlay::path_overlay::OVERLAY_SAMPLES_PER_SEGMENT;
+use freecam_core::structs::MarkerEntry;
 
-use crate::types::{FcOverlayMarker, FcOverlaySegment, FcOverlayView};
+use crate::types::FcMarkerEntry;
 
-// everything behind the handle's lock: the controller and the C-layout copies of its overlay. The copies
-// hold at most PATH_CAPACITY * OVERLAY_SAMPLES_PER_SEGMENT segments and PATH_CAPACITY markers and are
-// sized once by new, so their addresses never change
+// everything behind the handle's lock
+//
+// Bound: each marker buffer holds at most the controller's marker capacity (`markers.maxShapes`), reserved once in
+// `new()`. A fill never grows past it, so the buffer is never reallocated and a borrowed pointer stays put until the
+// next fill of the same buffer.
 pub struct HandleState {
     controller: FreecamController,
-    segments: Vec<FcOverlaySegment>,
-    markers: Vec<FcOverlayMarker>,
+    // the last fc_frame marker batch
+    markers: Vec<FcMarkerEntry>,
+    // the last fc_markers_shutdown batch
+    shutdown_markers: Vec<FcMarkerEntry>,
 }
 
 impl HandleState {
     pub fn new(controller: FreecamController) -> Self {
-        Self {
-            controller,
-            segments: Vec::with_capacity(PATH_CAPACITY * OVERLAY_SAMPLES_PER_SEGMENT),
-            markers: Vec::with_capacity(PATH_CAPACITY),
-        }
+        let capacity = controller.marker_capacity();
+        Self { controller, markers: Vec::with_capacity(capacity), shutdown_markers: Vec::with_capacity(capacity) }
     }
 
     pub fn controller_mut(&mut self) -> &mut FreecamController {
         &mut self.controller
     }
 
-    // refills the copies from the controller's overlay without allocating and returns a view of them
-    pub fn refresh_overlay(&mut self) -> FcOverlayView {
-        let overlay = self.controller.overlay();
-        self.segments.clear();
-        self.segments.extend(overlay.segments.iter().take(self.segments.capacity()).map(FcOverlaySegment::from));
-        self.markers.clear();
-        self.markers.extend(overlay.markers.iter().take(self.markers.capacity()).map(FcOverlayMarker::from));
-        FcOverlayView {
-            segments: self.segments.as_ptr(),
-            segment_count: self.segments.len() as u32,
-            markers: self.markers.as_ptr(),
-            marker_count: self.markers.len() as u32,
-            point_count: overlay.point_count,
-            shot_seconds: overlay.shot_seconds,
-            visible: u8::from(self.controller.overlay_visible()),
-        }
+    // copies the frame's marker batch into the reused buffer; null with a count of 0 when the batch is empty
+    pub fn publish_markers(&mut self) -> (*const FcMarkerEntry, usize) {
+        Self::fill(&mut self.markers, self.controller.marker_batch())
+    }
+
+    // a remove for every live marker, copied into its own reused buffer so the last frame batch stays readable
+    pub fn shutdown_markers(&mut self) -> (*const FcMarkerEntry, usize) {
+        Self::fill(&mut self.shutdown_markers, self.controller.marker_shutdown_batch())
+    }
+
+    fn fill(buffer: &mut Vec<FcMarkerEntry>, batch: &[MarkerEntry]) -> (*const FcMarkerEntry, usize) {
+        buffer.clear();
+        let room = buffer.capacity();
+        buffer.extend(batch.iter().take(room).map(FcMarkerEntry::from));
+        if buffer.is_empty() { (std::ptr::null(), 0) } else { (buffer.as_ptr(), buffer.len()) }
     }
 }

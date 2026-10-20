@@ -198,3 +198,61 @@ fn rebuild_does_not_reallocate() {
     curve.rebuild(&points[..3]);
     assert_eq!(curve.sample_capacity(), before);
 }
+
+#[test]
+fn segment_at_agrees_with_pose_at() {
+    let curve = Fixture::built(&[
+        Fixture::pose(0.0, 0.0, 0.0, 0.0, 0.0),
+        Fixture::pose(10.0, 2.0, 4.0, 90.0, 10.0),
+        Fixture::pose(14.0, 0.0, 20.0, 180.0, -10.0),
+    ]);
+    let length = curve.length();
+    for step in 0..=100 {
+        let distance = length * step as f32 / 100.0;
+        let (segment, t) = curve.segment_at(distance);
+        assert!(segment < 2 && (0.0..=1.0).contains(&t), "segment {segment}, t {t}");
+        assert_eq!(curve.position_in_segment(segment, t), curve.position_at(distance));
+        assert_eq!(curve.pose_in_segment(segment, t), curve.pose_at(distance));
+    }
+    assert_eq!(curve.segment_at(-1.0), (0, 0.0));
+    assert_eq!(curve.segment_at(length + 1.0), (1, 1.0));
+}
+
+#[test]
+fn segment_lookup_on_a_short_curve_stays_in_bounds() {
+    let empty = Fixture::built(&[]);
+    assert_eq!(empty.segment_at(3.0), (0, 0.0));
+    assert_eq!(empty.position_in_segment(5, 0.5), Vec3::default());
+    let single = Fixture::built(&[Fixture::pose(1.0, 2.0, 3.0, 0.0, 0.0)]);
+    assert_eq!(single.position_in_segment(5, 0.5), Vec3::new(1.0, 2.0, 3.0));
+    let pair = Fixture::built(&[Fixture::pose(0.0, 0.0, 0.0, 0.0, 0.0), Fixture::pose(4.0, 0.0, 0.0, 0.0, 0.0)]);
+    assert_eq!(pair.position_in_segment(9, 1.0), Vec3::new(4.0, 0.0, 0.0));
+}
+
+#[test]
+fn paced_curve_keeps_its_points_and_takes_the_pace_spacing() {
+    let points = [
+        Fixture::pose(0.0, 0.0, 0.0, 0.0, 0.0),
+        Fixture::pose(24.0, 0.0, 0.0, 0.0, 0.0),
+        Fixture::pose(30.0, 0.0, 0.0, 0.0, 0.0),
+    ];
+    let even_pace = [
+        Fixture::pose(0.0, 5.0, 0.0, 0.0, 0.0),
+        Fixture::pose(10.0, 5.0, 0.0, 0.0, 0.0),
+        Fixture::pose(20.0, 5.0, 0.0, 0.0, 0.0),
+    ];
+    let own = Fixture::built(&points);
+    let mut paced = PathCurve::new();
+    paced.rebuild_paced(&points, &even_pace);
+
+    for (index, point) in points.iter().enumerate() {
+        let (segment, t) = if index == 0 { (0, 0.0) } else { (index - 1, 1.0) };
+        assert_eq!(paced.position_in_segment(segment, t), point.position);
+    }
+    // the knot spacing changes the path between the points
+    assert!((paced.position_in_segment(0, 0.5) - own.position_in_segment(0, 0.5)).length() > 0.01);
+
+    let mut same = PathCurve::new();
+    same.rebuild_paced(&points, &points[..2]);
+    assert_eq!(same.position_in_segment(0, 0.5), own.position_in_segment(0, 0.5));
+}

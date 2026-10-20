@@ -21,9 +21,6 @@ public:
 
     // derives the field of view and aspect from the camera's projection matrix after setupCamera; the next read() passes them on
     static void observeCamera(mce::Camera const& camera);
-
-    // logs the matrix-derived field of view and aspect beside the projection inputs read into status
-    static void logProjectionInputs(FcFrameStatus const& status);
 };
 
 } // namespace levi_freecam

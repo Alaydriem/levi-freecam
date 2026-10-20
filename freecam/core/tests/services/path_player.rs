@@ -7,7 +7,7 @@ struct Fixture;
 impl Fixture {
     fn started(length: f32, speed: f32, settle_frames: u32) -> PathPlayer {
         let mut player = PathPlayer::new(EASE_RAMP_SECONDS);
-        player.start(length, speed, settle_frames);
+        player.start(length, speed, settle_frames, 0.0);
         player
     }
 
@@ -219,4 +219,76 @@ fn down_ramp_mirrors_up_ramp() {
             break;
         }
     }
+}
+
+#[test]
+fn start_from_a_distance_settles_there_then_eases_in_from_rest() {
+    let mut player = PathPlayer::new(EASE_RAMP_SECONDS);
+    player.start(100.0, 6.0, 2, 40.0);
+    for _ in 0..2 {
+        let step = player.step(0.1, false);
+        assert!(step.settling);
+        assert_eq!(step.distance, 40.0);
+    }
+    let paused = player.step(0.1, true);
+    assert_eq!(paused.distance, 40.0);
+
+    let moving = player.step(0.5, false);
+
+    // half the 1 s ramp from rest: 6 * 1 * (0.5^3 - 0.5^4 / 2) = 0.5625 blocks
+    assert!(!moving.settling);
+    assert!((moving.distance - 40.5625).abs() < 1e-3, "distance {}", moving.distance);
+}
+
+#[test]
+fn start_from_a_distance_ends_with_the_same_down_ramp() {
+    let dt = 1.0 / 60.0;
+    let mut player = PathPlayer::new(EASE_RAMP_SECONDS);
+    player.start(100.0, 6.0, 0, 40.0);
+    let mut distances = Vec::new();
+    loop {
+        let step = player.step(dt, false);
+        distances.push(step.distance);
+        if step.finished {
+            break;
+        }
+    }
+
+    // 60 blocks at 6 per second plus one ramp
+    let seconds = distances.len() as f64 * dt;
+    assert!((seconds - 11.0).abs() < 2.0 * dt, "seconds {seconds}");
+    assert_eq!(*distances.last().unwrap(), 100.0);
+    let last_step = distances[distances.len() - 2] - distances[distances.len() - 3];
+    assert!(last_step < 0.01, "last step {last_step}");
+}
+
+#[test]
+fn stop_during_the_settle_holds_the_start_distance() {
+    let mut player = PathPlayer::new(EASE_RAMP_SECONDS);
+    player.start(100.0, 6.0, 3, 40.0);
+    player.step(0.1, false);
+
+    player.stop();
+
+    assert_eq!(player.step(0.1, false).distance, 40.0);
+}
+
+#[test]
+fn seconds_at_inverts_the_playback_mapping_ramps_included() {
+    let dt = 1.0 / 60.0;
+    let mut player = Fixture::started(30.0, 6.0, 0);
+    let mut elapsed = 0.0_f64;
+    loop {
+        let step = player.step(dt, false);
+        elapsed += dt;
+        if step.finished {
+            break;
+        }
+        let seconds = PathPlayer::seconds_at(30.0, 6.0, EASE_RAMP_SECONDS, step.distance);
+        assert!((f64::from(seconds) - elapsed).abs() < 2e-3, "seconds {seconds} at {elapsed}");
+    }
+    assert_eq!(PathPlayer::seconds_at(30.0, 6.0, EASE_RAMP_SECONDS, 0.0), 0.0);
+    let total = PathPlayer::duration(30.0, 6.0, EASE_RAMP_SECONDS);
+    assert!((PathPlayer::seconds_at(30.0, 6.0, EASE_RAMP_SECONDS, 30.0) - total).abs() < 1e-4);
+    assert_eq!(PathPlayer::seconds_at(30.0, 0.0, EASE_RAMP_SECONDS, 10.0), 0.0);
 }

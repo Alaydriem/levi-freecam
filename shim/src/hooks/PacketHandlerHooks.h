@@ -2,6 +2,7 @@
 
 #include "bridge/RustBridge.h"
 #include "camera/CameraInstructions.h"
+#include "network/ClientPacketHandler.h"
 
 #include <ll/api/memory/Hook.h>
 #include <mc/client/network/ClientNetworkHandler.h>
@@ -23,7 +24,7 @@ LL_TYPE_INSTANCE_HOOK(
     NetworkIdentifier const&                 id,
     NetworkChunkPublisherUpdatePacket const& packet
 ) {
-    CameraInstructions::capture(this, id);
+    ClientPacketHandler::capture(this, id);
     origin(id, packet);
 }
 
@@ -37,7 +38,7 @@ LL_TYPE_INSTANCE_HOOK(
     NetworkIdentifier const&   id,
     CameraPresetsPacket const& packet
 ) {
-    CameraInstructions::capture(this, id);
+    ClientPacketHandler::capture(this, id);
     origin(id, packet);
 }
 

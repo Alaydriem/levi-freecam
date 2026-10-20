@@ -31,9 +31,15 @@ Alaydriem's Freecam lets the camera leave your player and fly anywhere. Your pla
 - **🧍 Frozen player**
   - While the camera is free, your player does not walk, turn, jump, use or attack.
 - **🖥️ Clean screen**
-  - The HUD, the hand and the crosshair are hidden while freecam is on.
+  - The HUD, the hand and the crosshair are hidden while freecam is on. Press <kbd>F1</kbd> to show the HUD again.
 - **🛤️ Camera paths**
-  - Create simple camera paths for playback in-game to take beautiful recordings in your world with easing, with simple overlay paths
+  - Add points along a route and play the path back with easing. Each point is a camera box drawn in the world, joined by a dashed line with an arrow on each part. The selected point's box is green and the others are blue.
+  - When you add a point while the crosshair is on a block or an entity, the point looks at that target. Playback keeps the camera aimed at it, so orbit shots stay on the subject.
+- **🎞️ Playback bar**
+  - A small bar with rewind, play, a scrubber and the point tools. Press <kbd>Ctrl</kbd> + <kbd>E</kbd> to show or hide it.
+  - With the bar open you can still fly with the keys, look around with the right mouse button held, and change the speed with the mouse wheel.
+- **📸 Screenshots**
+  - Save a PNG of the freecam view from the bar. The bar and the path markers are hidden for the shot.
 - **🛡️ Safe exits**
   - Freecam turns off by itself when you take damage, die, change dimension or leave the world, or when the server takes control of the camera.
 
@@ -86,17 +92,39 @@ The mod hooks into the game directly. A new game version needs a new mod release
 | <kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> | Move | Freecam on |
 | <kbd>Space</kbd> / <kbd>Shift</kbd> | Move up / down | Freecam on |
 | Hold <kbd>Ctrl</kbd> | Move 3 times faster | Freecam on |
-| Mouse | Look | Freecam on |
-| Mouse wheel | Change the speed | Freecam on |
+| Mouse | Look | Freecam on, bar hidden |
+| Mouse wheel | Change the speed. With the bar open, point away from the bar | Freecam on |
 | <kbd>Ctrl</kbd> + <kbd>[</kbd> | Smooth motion on / off | Freecam on |
-| <kbd>Ctrl</kbd> + <kbd>B</kbd> | Add a path point | Freecam on, path not playing |
-| <kbd>Ctrl</kbd> + <kbd>Z</kbd> | Remove the last path point | Freecam on, path not playing |
-| <kbd>Ctrl</kbd> + <kbd>Enter</kbd> | Play or stop the path | Freecam on, 2 or more points |
+| <kbd>Ctrl</kbd> + <kbd>E</kbd> | Show or hide the playback bar. While a path plays: stop playback | Freecam on |
+| <kbd>Ctrl</kbd> + <kbd>B</kbd> | Add a path point at the playhead | Freecam on, path not playing |
+| <kbd>Del</kbd> | Delete the selected point. With no selected point, it does nothing | Freecam on, path not playing |
+| Hold right mouse button and move | Look around. Press away from the bar; the cursor hides and comes back where it was when you release | Bar open |
+| <kbd>F1</kbd> | Show or hide the HUD (the game's own key; it also shows name tags and the numbers of mods such as Light Levels) | Freecam on |
 
 Key combinations work only when no game menu or chat is open.
 
+While the bar is open, the mouse cursor shows and moving the mouse does not turn the camera. To look around, hold the right mouse button away from the bar and move the mouse. You can still move with the keys, and the mouse wheel still changes the speed when the cursor is away from the bar.
+
+When a path plays, the bar and the markers hide. Playback stops at the end of the path, or when you press <kbd>Ctrl</kbd> + <kbd>E</kbd>. The camera then stays where it stopped.
+
+### Playback bar
+
+| Button | What it does |
+| --- | --- |
+| Rewind | Go to the start of the path. The camera moves there |
+| Play | Play the path from the playhead. At the end of the path, play starts from the start |
+| Timecode | The playhead time and the full path time |
+| Speed | The playback speed, in blocks per second. It is the flying speed, so change it with the mouse wheel |
+| Scrubber | Drag to move along the path. The camera follows. Each point is a mark |
+| Select | Click a mark to select a point. The camera and the playhead move to it. Click it again to clear the selection |
+| Re-place | Move the selected point to the camera (shown when a point is selected) |
+| Delete | Delete the selected point (shown when a point is selected) |
+| Add point | Add a point after the last point at or before the playhead |
+| Clear points (✕) | Delete all points. Click two times within 3 seconds |
+| Screenshot | Save a PNG to `%USERPROFILE%\Pictures\Screenshots` (the folder is a setting). A message on the bar says if it was saved or failed |
+
 > [!TIP]
-> Every key is a setting in `config.json`, written as a [Windows virtual-key code](https://learn.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes). <kbd>Ctrl</kbd> is the `modifier` key for every combination, and it is also the fast key.
+> Every key is a setting in `config.json`, written as a [Windows virtual-key code](https://learn.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes). <kbd>Ctrl</kbd> is the `modifier` key for every combination, and it is also the fast key. <kbd>Del</kbd> is pressed on its own.
 
 ---
 
@@ -114,8 +142,8 @@ Speeds are in blocks per second. Keys are Windows virtual-key codes.
 | `keys` | `toggle` | `0x50` (<kbd>P</kbd>) | With the modifier: freecam on / off |
 | | `smoothToggle` | `0xDB` (<kbd>[</kbd>) | With the modifier: smooth motion on / off |
 | | `addPoint` | `0x42` (<kbd>B</kbd>) | With the modifier: add a path point |
-| | `undoPoint` | `0x5A` (<kbd>Z</kbd>) | With the modifier: remove the last path point |
-| | `play` | `0x0D` (<kbd>Enter</kbd>) | With the modifier: play or stop the path |
+| | `cursor` | `0x45` (<kbd>E</kbd>) | With the modifier: show or hide the bar. <kbd>Tab</kbd> is not allowed (the game uses it) |
+| | `delete` | `0x2E` (<kbd>Del</kbd>) | Delete the selected point (no modifier) |
 | | `modifier` | `0x11` (<kbd>Ctrl</kbd>) | The combination key, and the fast key |
 | | `forward` / `back` / `left` / `right` | `0x57` / `0x53` / `0x41` / `0x44` | Move (<kbd>W</kbd> <kbd>S</kbd> <kbd>A</kbd> <kbd>D</kbd>) |
 | | `up` / `down` | `0x20` / `0x10` | Move up / down (<kbd>Space</kbd> / <kbd>Shift</kbd>) |
@@ -128,6 +156,16 @@ Speeds are in blocks per second. Keys are Windows virtual-key codes.
 | | `pitchLimit` | `89.9` | Highest up or down look angle, in degrees. Maximum `89.9` |
 | | `maxFrameDt` | `0.1` | Longest frame time used for motion, in seconds. Maximum `1.0` |
 | | `smoothAtStart` | `true` | Smooth motion is on when freecam turns on |
+| `ui` | `eventQueueCapacity` | `256` | Size of the queue that carries input to the UI. Range `16` to `4096` |
+| | `maxVertices` | `65536` | A UI frame with more vertices is not drawn. Range `4096` to `1048576` |
+| `markers` | `enabled` | `true` | Draw the point boxes and path line in the world |
+| | `maxShapes` | `4096` | Most shapes drawn at one time. Range `2560` to `8192` |
+| | `maxPerSend` | `400` | Most shapes sent to the game in one frame. Range `50` to `800` |
+| | `lineWeight` | `2` | `1` or `2`. `2` draws each box edge two times for a bolder line |
+| | `frustumDepth` | `1.2` | Length of a camera box, in blocks. Range `0.3` to `5.0` |
+| `lookAt` | `enabled` | `true` | Add point can store a target when the crosshair hits a block or entity |
+| | `maxDistance` | `256.0` | Length of the look-at ray, in blocks. Range `8` to `512` |
+| `screenshot` | `folder` | `%USERPROFILE%\Pictures\Screenshots` | Where screenshots go. Variables are expanded and the folder is created. A blank value uses the default |
 | top level | `exitWaitFrames` | `10` | Frames that the exit takes before control returns to your player. Minimum `4` |
 | | `telemetry` | `false` | Write frame timing to the log, for testing |
 
@@ -190,7 +228,7 @@ mise run test        # every Rust test
 <details>
 <summary><b>How the code is organised</b></summary>
 
-All the decisions are made in Rust: `freecam/core` (camera motion, input, paths, no game code) and `freecam/ffi` (the C interface). A thin C++ part in `shim/` connects to the game through LeviLamina, applies the camera each frame, and draws the path overlay with Dear ImGui. Run `mise tasks` to see every task.
+All the decisions are made in Rust: `freecam/core` (camera motion, input, paths, no game code) and `freecam/ffi` (the C interface). A thin C++ part in `shim/` connects to the game through LeviLamina, applies the camera each frame, and draws the in-world path markers and the egui interface (the playback bar). Run `mise tasks` to see every task.
 
 </details>
 
@@ -204,4 +242,4 @@ All the decisions are made in Rust: `freecam/core` (camera motion, input, paths,
 
 BSD 3-Clause. See [LICENSE](./LICENSE).
 
-Thanks to [LeviLamina](https://github.com/LiteLDev/LeviLamina) and [Dear ImGui](https://github.com/ocornut/imgui).
+Thanks to [LeviLamina](https://github.com/LiteLDev/LeviLamina) and [egui](https://github.com/emilk/egui).

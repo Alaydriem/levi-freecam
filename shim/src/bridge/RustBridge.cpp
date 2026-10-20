@@ -47,6 +47,8 @@ void RustBridge::destroy() {
 
 const FcHandle* RustBridge::handle() { return g_handle.load(std::memory_order_acquire); }
 
+FcHandle* RustBridge::mutableHandle() { return g_handle.load(std::memory_order_acquire); }
+
 std::string RustBridge::utf8(const std::filesystem::path& path) {
     auto bytes = path.u8string();
     return std::string(reinterpret_cast<const char*>(bytes.data()), bytes.size());

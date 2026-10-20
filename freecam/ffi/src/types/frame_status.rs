@@ -27,9 +27,12 @@ pub struct FcFrameStatus {
     pub fov_y_degrees: f32,
     // width over height of the view
     pub aspect: f32,
-    // the view size in pixels
-    pub screen_width: f32,
-    pub screen_height: f32,
+    // shim time spent delivering the previous frame's marker batch, 0 when nothing was sent
+    pub last_shape_send_us: f32,
+    // raised by one each time the shim captures a ClientNetworkHandler; 0 while none was captured
+    pub handler_generation: u32,
+    /// raised by one on each Present; a screenshot counts its frames in presents, not in fc_frame calls
+    pub present_count: u32,
 }
 
 impl From<&FcFrameStatus> for FrameStatus {
@@ -51,8 +54,9 @@ impl From<&FcFrameStatus> for FrameStatus {
             game_camera_position: optional(value.has_game_camera_position, &value.game_camera_position),
             fov_y_degrees: value.fov_y_degrees,
             aspect: value.aspect,
-            screen_width: value.screen_width,
-            screen_height: value.screen_height,
+            last_shape_send_us: value.last_shape_send_us,
+            handler_generation: value.handler_generation,
+            present_count: value.present_count,
         }
     }
 }

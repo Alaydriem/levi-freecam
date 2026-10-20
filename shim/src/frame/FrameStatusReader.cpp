@@ -2,7 +2,6 @@
 
 #include "camera/CameraInstructions.h"
 #include "camera/RenderOverride.h"
-#include "mod/FreecamMod.h"
 #include "render/OverlayHook.h"
 
 #include <mc/client/game/ClientInstance.h>
@@ -115,10 +114,11 @@ float aspectOrScreen(float aspect, float width, float height) {
 }
 
 void readProjection(FcFrameStatus& status) {
-    OverlayHook::backBufferSize(status.screen_width, status.screen_height);
+    float width  = 0.0f;
+    float height = 0.0f;
+    OverlayHook::backBufferSize(width, height);
     status.fov_y_degrees = gCameraFov.load(std::memory_order_relaxed);
-    status.aspect =
-        aspectOrScreen(gCameraAspect.load(std::memory_order_relaxed), status.screen_width, status.screen_height);
+    status.aspect        = aspectOrScreen(gCameraAspect.load(std::memory_order_relaxed), width, height);
 }
 
 } // namespace
@@ -127,6 +127,7 @@ FcFrameStatus FrameStatusReader::readOutsideWorld() {
     FcFrameStatus status{};
     status.time_seconds = nowSeconds();
     status.focused      = gameWindowFocused() ? 1 : 0;
+    status.present_count = OverlayHook::presentCount();
     return status;
 }
 
@@ -155,19 +156,6 @@ void FrameStatusReader::observeCamera(mce::Camera const& camera) {
     bool      usable     = std::isfinite(focalY) && std::isfinite(focalX) && focalY > 0.0f && focalX > 0.0f;
     gCameraFov.store(usable ? 2.0f * std::atan(1.0f / focalY) * DEGREES_PER_RADIAN : 0.0f, std::memory_order_relaxed);
     gCameraAspect.store(usable ? focalY / focalX : 0.0f, std::memory_order_relaxed);
-}
-
-void FrameStatusReader::logProjectionInputs(FcFrameStatus const& status) {
-    FreecamMod::getInstance().getSelf().getLogger().info(
-        "overlay inputs (from the projection matrix): matrix fov {}, matrix aspect {}; fov_y_degrees {}, aspect {}, back "
-        "buffer {}x{}",
-        gCameraFov.load(std::memory_order_relaxed),
-        gCameraAspect.load(std::memory_order_relaxed),
-        status.fov_y_degrees,
-        status.aspect,
-        status.screen_width,
-        status.screen_height
-    );
 }
 
 } // namespace levi_freecam

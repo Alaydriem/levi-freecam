@@ -12,4 +12,16 @@ rename_variants = "ScreamingSnakeCase"
 prefix_with_name = true
 
 [export]
-include = ["FcStatus", "FcFrameStatus", "FcFrameOutput", "FcOverlaySegment", "FcOverlayMarker", "FcOverlayView"]
+include = [
+    "FcStatus",
+    "FcFrameStatus",
+    "FcFrameOutput",
+    "FcMarkerEntry",
+    "FcRayRequest",
+    "FcUiEvent",
+    "FcUiFrameInput",
+    "FcUiVertex",
+    "FcUiDraw",
+    "FcUiTextureDelta",
+    "FcUiFrame",
+]

@@ -10,10 +10,13 @@ autotests = false
 crate-type = ["staticlib", "rlib"]
 
 [dependencies]
+crossbeam-queue.workspace = true
 freecam-core.workspace = true
+freecam-ui.workspace = true
 log.workspace = true
 
 [dev-dependencies]
+egui.workspace = true
 tempfile.workspace = true
 
 [[test]]

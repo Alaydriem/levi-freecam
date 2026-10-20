@@ -17,6 +17,11 @@ description = "Every workspace test through cargo-nextest"
 dir = "{{config_root}}"
 run = "cargo nextest run --workspace"
 
+[tasks.bench-ui]
+description = "Runs the headless UI bench (600 frames, fixed snapshot) and prints run, tessellate and copy times"
+dir = "{{config_root}}"
+run = "cargo run --release -p freecam-ui --example ui_bench"
+
 [tasks.header]
 description = "Regenerates shim/include/levi_freecam.h from the freecam-ffi crate"
 dir = "{{config_root}}"

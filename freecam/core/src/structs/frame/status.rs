@@ -23,7 +23,10 @@ pub struct FrameStatus {
     pub fov_y_degrees: f32,
     // width over height of the viewport
     pub aspect: f32,
-    // viewport size in pixels
-    pub screen_width: f32,
-    pub screen_height: f32,
+    // shim time spent delivering the previous frame's marker batch, 0 when nothing was sent
+    pub last_shape_send_us: f32,
+    // count of camera handler captures, raised by one on each capture; 0 while none was captured
+    pub handler_generation: u32,
+    // count of presented frames, raised by one on each Present; the shim may call fc_frame more than once per present
+    pub present_count: u32,
 }

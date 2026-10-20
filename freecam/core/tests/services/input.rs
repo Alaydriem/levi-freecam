@@ -7,6 +7,9 @@ const P: u32 = 0x50;
 const BRACKET: u32 = 0xDB;
 const W: u32 = 0x57;
 const ESC: u32 = 0x1B;
+const F1: u32 = 0x70;
+const E: u32 = 0x45;
+const DEL: u32 = 0x2E;
 
 struct Fixture;
 
@@ -60,6 +63,12 @@ fn active_consumes_key_downs_except_escape() {
     let mut input = Fixture::tracker();
     assert!(input.on_key(W, true, true, false).consume);
     assert!(!input.on_key(ESC, true, true, false).consume);
+}
+
+#[test]
+fn active_passes_f1_to_the_game() {
+    let mut input = Fixture::tracker();
+    assert!(!input.on_key(F1, true, true, false).consume);
 }
 
 #[test]
@@ -173,50 +182,92 @@ const Z: u32 = 0x5A;
 const ENTER: u32 = 0x0D;
 
 #[test]
-fn ctrl_k_z_enter_fire_only_when_active() {
-    let cases = [(B, InputAction::AddPoint), (Z, InputAction::UndoPoint), (ENTER, InputAction::TogglePlayback)];
-    for (code, expected) in cases {
-        let mut input = Fixture::tracker();
-        input.on_key(CTRL, true, true, false);
-        let active = input.on_key(code, true, true, false);
-        assert_eq!(active.action, Some(expected));
-        assert!(active.consume);
+fn add_point_chord_fires_only_when_active() {
+    let mut input = Fixture::tracker();
+    input.on_key(CTRL, true, true, false);
+    let active = input.on_key(B, true, true, false);
+    assert_eq!(active.action, Some(InputAction::AddPoint));
+    assert!(active.consume);
 
-        let mut input = Fixture::tracker();
-        input.on_key(CTRL, true, false, false);
-        let inactive = input.on_key(code, true, false, false);
-        assert_eq!(inactive.action, None);
+    let mut input = Fixture::tracker();
+    input.on_key(CTRL, true, false, false);
+    let inactive = input.on_key(B, true, false, false);
+    assert_eq!(inactive.action, None);
 
-        let mut input = Fixture::tracker();
-        let no_ctrl = input.on_key(code, true, true, false);
-        assert_eq!(no_ctrl.action, None);
-    }
+    let mut input = Fixture::tracker();
+    let no_ctrl = input.on_key(B, true, true, false);
+    assert_eq!(no_ctrl.action, None);
 }
 
 #[test]
 fn path_chords_ignored_in_menu() {
-    for code in [B, Z, ENTER] {
-        let mut input = Fixture::tracker();
-        input.on_key(CTRL, true, true, true);
-        let outcome = input.on_key(code, true, true, true);
-        assert_eq!(outcome.action, None);
-        assert!(!outcome.consume);
-    }
+    let mut input = Fixture::tracker();
+    input.on_key(CTRL, true, true, true);
+    let outcome = input.on_key(B, true, true, true);
+    assert_eq!(outcome.action, None);
+    assert!(!outcome.consume);
 }
 
 #[test]
 fn path_chord_repeat_does_not_retrigger() {
-    for (code, expected) in
-        [(B, InputAction::AddPoint), (Z, InputAction::UndoPoint), (ENTER, InputAction::TogglePlayback)]
-    {
-        let mut input = Fixture::tracker();
-        input.on_key(CTRL, true, true, false);
-        assert_eq!(input.on_key(code, true, true, false).action, Some(expected));
-        assert_eq!(input.on_key(code, true, true, false).action, None);
-        input.on_key(code, false, true, false);
-        assert_eq!(input.on_key(code, true, true, false).action, Some(expected));
-        input.clear_held();
-        input.on_key(CTRL, true, true, false);
-        assert_eq!(input.on_key(code, true, true, false).action, Some(expected));
-    }
+    let mut input = Fixture::tracker();
+    input.on_key(CTRL, true, true, false);
+    assert_eq!(input.on_key(B, true, true, false).action, Some(InputAction::AddPoint));
+    assert_eq!(input.on_key(B, true, true, false).action, None);
+    input.on_key(B, false, true, false);
+    assert_eq!(input.on_key(B, true, true, false).action, Some(InputAction::AddPoint));
+    input.clear_held();
+    input.on_key(CTRL, true, true, false);
+    assert_eq!(input.on_key(B, true, true, false).action, Some(InputAction::AddPoint));
+}
+
+#[test]
+fn ctrl_enter_gives_no_action() {
+    let mut input = Fixture::tracker();
+    input.on_key(CTRL, true, true, false);
+    let outcome = input.on_key(ENTER, true, true, false);
+    assert_eq!(outcome.action, None);
+}
+
+#[test]
+fn ctrl_e_in_freecam_gives_toggle_cursor() {
+    let mut input = Fixture::tracker();
+    input.on_key(CTRL, true, true, false);
+    let outcome = input.on_key(E, true, true, false);
+    assert_eq!(outcome.action, Some(InputAction::ToggleCursor));
+    assert!(outcome.consume);
+}
+
+#[test]
+fn delete_needs_no_modifier() {
+    let mut input = Fixture::tracker();
+    let outcome = input.on_key(DEL, true, true, false);
+    assert_eq!(outcome.action, Some(InputAction::DeletePoint));
+    assert!(outcome.consume);
+}
+
+#[test]
+fn delete_outside_freecam_does_nothing() {
+    let mut input = Fixture::tracker();
+    let outcome = input.on_key(DEL, true, false, false);
+    assert_eq!(outcome.action, None);
+    assert!(!outcome.consume);
+}
+
+#[test]
+fn delete_repeat_fires_once() {
+    let mut input = Fixture::tracker();
+    assert_eq!(input.on_key(DEL, true, true, false).action, Some(InputAction::DeletePoint));
+    let repeat = input.on_key(DEL, true, true, false);
+    assert_eq!(repeat.action, None);
+    assert!(repeat.consume);
+    input.on_key(DEL, false, true, false);
+    assert_eq!(input.on_key(DEL, true, true, false).action, Some(InputAction::DeletePoint));
+}
+
+#[test]
+fn ctrl_z_is_not_a_chord() {
+    let mut input = Fixture::tracker();
+    input.on_key(CTRL, true, true, false);
+    assert_eq!(input.on_key(Z, true, true, false).action, None);
 }

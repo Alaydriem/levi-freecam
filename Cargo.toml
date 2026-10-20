@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["freecam/core", "freecam/ffi"]
+members = ["freecam/core", "freecam/ffi", "freecam/ui"]
 
 [workspace.package]
 version = "0.1.0"
@@ -12,9 +12,13 @@ publish = false
 log = "0.4.34"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
+crossbeam-queue = "0.3.14"
 thiserror = "2.0.21"
 tempfile = "3.27.0"
+stats_alloc = "0.1.10"
+egui = "=0.37.0"
 freecam-core = { path = "freecam/core" }
+freecam-ui = { path = "freecam/ui" }
 
 [workspace.lints.clippy]
 unwrap_used = "deny"

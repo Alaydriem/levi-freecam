@@ -1,7 +1,10 @@
-use freecam_core::config::FreecamConfig;
+use std::collections::HashMap;
+
+use freecam_core::config::{FreecamConfig, LookAtConfig, MarkerConfig, MotionConfig};
 use freecam_core::services::FreecamController;
 use freecam_core::structs::{
-    CameraCommand, CameraPose, FrameOutput, FrameStatus, FreecamState, GuiCommand, ServerInstruction,
+    CameraCommand, CameraPose, FrameOutput, FrameStatus, FreecamState, GuiCommand, MarkerKind, MarkerShape,
+    MouseCommand, PathKey, RayRequest, ServerInstruction, UiAction, Vec3,
 };
 
 use crate::support::frames::Frames;
@@ -11,35 +14,87 @@ const P: u32 = 0x50;
 const BRACKET: u32 = 0xDB;
 const W: u32 = 0x57;
 const B: u32 = 0x42;
-const Z: u32 = 0x5A;
+const DEL: u32 = 0x2E;
 const ENTER: u32 = 0x0D;
+const E: u32 = 0x45;
+const RIGHT: u8 = 2;
 const FRAME_STEP: f64 = 0.05;
 const EXIT_WAIT: usize = 10;
 
 struct Rig {
     controller: FreecamController,
     time: f64,
+    // the shapes the client shows after every marker batch so far, by id
+    world: HashMap<u64, MarkerShape>,
+    // entry count of each frame's marker batch
+    batch_sizes: Vec<usize>,
+    // the shim's handler capture count sent in every status, 0 for no captured handler
+    generation: u32,
 }
 
 impl Rig {
+    // look-at keys off, so the add-point key stores a plain key at once
     fn new() -> Self {
-        Self { controller: FreecamController::new(FreecamConfig::default()), time: 0.0 }
+        Self::with_config(Self::config(false))
+    }
+
+    // the default config, so the add-point key asks for a ray
+    fn look_at() -> Self {
+        Self::with_config(Self::config(true))
+    }
+
+    fn config(look_at: bool) -> FreecamConfig {
+        FreecamConfig {
+            look_at: LookAtConfig { enabled: look_at, ..LookAtConfig::default() },
+            ..FreecamConfig::default()
+        }
+    }
+
+    fn with_config(config: FreecamConfig) -> Self {
+        Self {
+            controller: FreecamController::new(config),
+            time: 0.0,
+            world: HashMap::new(),
+            batch_sizes: Vec::new(),
+            generation: 1,
+        }
+    }
+
+    // applies the frame's marker batch the way the client does
+    fn apply_markers(&mut self) {
+        let batch = self.controller.marker_batch();
+        self.batch_sizes.push(batch.len());
+        for entry in batch {
+            if entry.shape.kind == MarkerKind::Remove {
+                self.world.remove(&entry.id);
+            } else {
+                self.world.insert(entry.id, entry.shape);
+            }
+        }
+    }
+
+    fn last_batch_size(&self) -> usize {
+        self.batch_sizes.last().copied().unwrap_or(0)
     }
 
     fn status(&mut self) -> FrameStatus {
         self.time += FRAME_STEP;
-        Frames::status(self.time)
+        FrameStatus { handler_generation: self.generation, ..Frames::status(self.time) }
     }
 
     fn frame(&mut self) -> FrameOutput {
         let status = self.status();
-        self.controller.frame(&status)
+        let output = self.controller.frame(&status);
+        self.apply_markers();
+        output
     }
 
     fn frame_with(&mut self, edit: impl FnOnce(&mut FrameStatus)) -> FrameOutput {
         let mut status = self.status();
         edit(&mut status);
-        self.controller.frame(&status)
+        let output = self.controller.frame(&status);
+        self.apply_markers();
+        output
     }
 
     fn frames(&mut self, count: usize) -> Vec<FrameOutput> {
@@ -70,6 +125,12 @@ impl Rig {
         self.controller.on_key(CTRL, true);
         self.controller.on_key(key, true);
         self.controller.on_key(key, false);
+    }
+
+    // presses and releases Del
+    fn press_delete(&mut self) {
+        self.controller.on_key(DEL, true);
+        self.controller.on_key(DEL, false);
     }
 
     // freecam on with the smooth camera off, so the camera stops as soon as keys are released
@@ -112,10 +173,68 @@ impl Rig {
         (first, last)
     }
 
-    // presses Ctrl+Enter, leaving Ctrl held, and runs one frame
+    // turns bar mode on when it is off, clicks Play on the bar and runs one frame
     fn play(&mut self) -> FrameOutput {
-        self.chord(ENTER);
+        self.bar_on();
+        self.controller.apply_ui_action(UiAction::Play);
         self.frame()
+    }
+
+    // presses Ctrl+E while a path plays, leaving Ctrl held, and runs one frame
+    fn stop(&mut self) -> FrameOutput {
+        self.cursor()
+    }
+
+    // turns bar mode on when it is off
+    fn bar_on(&mut self) {
+        if !self.controller.ui_snapshot().cursor_mode {
+            self.cursor();
+        }
+    }
+
+    // a bar click and one frame
+    fn click(&mut self, action: UiAction) -> FrameOutput {
+        self.controller.apply_ui_action(action);
+        self.frame()
+    }
+
+    // presses Ctrl+E, leaving Ctrl held, and runs one frame
+    fn cursor(&mut self) -> FrameOutput {
+        self.chord(E);
+        self.frame()
+    }
+
+    // the right mouse button down or up; returns whether the game must not see it
+    fn right(&mut self, down: bool) -> bool {
+        self.controller.on_mouse_button(RIGHT, i8::from(down))
+    }
+
+    // a right press away from the UI and one frame, which starts a look drag in bar mode
+    fn start_drag(&mut self) -> FrameOutput {
+        self.right(true);
+        self.frame()
+    }
+
+    // freecam on and the cursor mode on, with Ctrl held
+    fn start_with_cursor(&mut self) -> FrameOutput {
+        self.start();
+        self.cursor()
+    }
+
+    // starts freecam with the smooth camera off and records three points 20 walking frames apart
+    fn three_points(&mut self) -> [CameraPose; 3] {
+        let first = self.start_sharp();
+        self.chord(B);
+        let second = self.walk(20);
+        self.chord(B);
+        let third = self.walk(20);
+        self.chord(B);
+        self.controller.on_key(CTRL, false);
+        [first, second, third]
+    }
+
+    fn point_distance(&self, index: usize) -> f32 {
+        self.controller.path().curve().point_distance(index)
     }
 
     fn pose(out: &FrameOutput) -> CameraPose {
@@ -411,19 +530,20 @@ fn leaving_world_while_exiting_turns_off_without_clear() {
 }
 
 #[test]
-fn add_and_undo_points_while_on() {
+fn del_key_without_selection_does_nothing() {
     let mut rig = Rig::new();
     let first = rig.start_sharp();
+    rig.press_delete();
+    assert!(rig.controller.path().points().is_empty());
     rig.chord(B);
+    rig.press_delete();
     assert_eq!(rig.controller.path().points(), &[first]);
     let second = rig.walk(10);
     rig.chord(B);
-    assert_eq!(rig.controller.path().points(), &[first, second]);
-    rig.chord(Z);
-    assert_eq!(rig.controller.path().points(), &[first]);
-    rig.chord(Z);
-    rig.chord(Z);
-    assert!(rig.controller.path().points().is_empty());
+    let third = rig.walk(10);
+    rig.chord(B);
+    rig.press_delete();
+    assert_eq!(rig.controller.path().points(), &[first, second, third]);
 }
 
 #[test]
@@ -449,7 +569,6 @@ fn play_snaps_to_first_point_then_settles_then_moves() {
         assert_eq!(out.camera, CameraCommand::Set(first));
         assert_eq!(out.render_override, Some(first));
         assert!(out.block_input);
-        assert!(!out.show_overlay);
     }
     let moving = Rig::pose(&rig.frame());
     assert!(Rig::gap(moving, first) > 0.0);
@@ -488,7 +607,7 @@ fn toggle_during_play_stops_in_place() {
     rig.play();
     rig.frames(EXIT_WAIT - 1 + 20);
     let here = Rig::pose(&rig.frame());
-    let stopped = rig.play();
+    let stopped = rig.stop();
     assert_eq!(rig.controller.state(), FreecamState::On);
     assert_eq!(Rig::pose(&stopped), here);
     for out in rig.frames(3) {
@@ -497,14 +616,14 @@ fn toggle_during_play_stops_in_place() {
 }
 
 #[test]
-fn add_undo_ignored_while_playing() {
+fn delete_key_during_playback_changes_nothing() {
     let mut rig = Rig::new();
     let (first, last) = rig.build_path(40);
     rig.play();
     rig.frames(EXIT_WAIT + 5);
     rig.chord(B);
-    rig.chord(Z);
-    rig.chord(Z);
+    assert!(rig.controller.on_key(DEL, true));
+    rig.controller.on_key(DEL, false);
     rig.frame();
     assert_eq!(rig.controller.state(), FreecamState::Playing);
     assert_eq!(rig.controller.path().points(), &[first, last]);
@@ -541,7 +660,7 @@ fn look_input_ignored_while_playing() {
     assert_eq!(noisy.frame().render_override, quiet.frame().render_override);
     noisy.controller.on_key(W, false);
     for rig in [&mut noisy, &mut quiet] {
-        rig.play();
+        rig.stop();
     }
     assert_eq!(noisy.controller.state(), FreecamState::On);
     for _ in 0..3 {
@@ -641,128 +760,13 @@ fn path_cleared_on_leaving_world() {
 }
 
 #[test]
-fn overlay_shown_only_in_on() {
-    let mut rig = Rig::new();
-    assert!(!rig.frame().show_overlay);
-    rig.start_sharp();
-    rig.chord(B);
-    assert!(rig.frame().show_overlay);
-    rig.walk(10);
-    rig.chord(B);
-    assert!(rig.frame().show_overlay);
-    assert!(!rig.play().show_overlay);
-    assert!(rig.frames(EXIT_WAIT + 5).iter().all(|out| !out.show_overlay));
-    let stopped = rig.play();
-    assert_eq!(rig.controller.state(), FreecamState::On);
-    assert!(stopped.show_overlay);
-    let exit = rig.begin_exit();
-    assert!(!exit.show_overlay);
-    assert!(rig.frames(EXIT_WAIT + 2).iter().all(|out| !out.show_overlay));
-}
-
-#[test]
-fn overlay_filled_only_while_on() {
-    const S: u32 = 0x53;
-    let mut rig = Rig::new();
-    rig.frame();
-    assert!(rig.controller.overlay().markers.is_empty());
-    assert_eq!(rig.controller.overlay().point_count, 0);
-
-    rig.start_sharp();
-    rig.chord(B);
-    rig.controller.on_key(CTRL, false);
-    rig.controller.on_key(S, true);
-    rig.frames(5);
-    rig.controller.on_key(S, false);
-    rig.frame();
-    assert_eq!(rig.controller.overlay().point_count, 1);
-    assert!(!rig.controller.overlay().markers.is_empty());
-
-    rig.chord(B);
-    rig.play();
-    assert_eq!(rig.controller.state(), FreecamState::Playing);
-    assert_eq!(rig.controller.overlay().point_count, 0);
-    assert!(rig.controller.overlay().markers.is_empty());
-    assert!(rig.controller.overlay().segments.is_empty());
-
-    rig.begin_exit();
-    assert!(matches!(rig.controller.state(), FreecamState::Exiting { .. }));
-    assert!(rig.controller.overlay().markers.is_empty());
-    assert!(rig.controller.overlay().segments.is_empty());
-    rig.frames(EXIT_WAIT);
-    assert_eq!(rig.controller.state(), FreecamState::Off);
-    assert!(rig.controller.overlay().markers.is_empty());
-    assert_eq!(rig.controller.overlay().point_count, 0);
-}
-
-#[test]
-fn overlay_hidden_in_on_with_no_points() {
-    let mut rig = Rig::new();
-    rig.start_sharp();
-    let out = rig.frame();
-    assert_eq!(rig.controller.state(), FreecamState::On);
-    assert!(!out.show_overlay);
-    assert!(!rig.controller.overlay_visible());
-    assert_eq!(rig.controller.overlay().point_count, 0);
-    assert!(rig.controller.overlay().markers.is_empty());
-    assert!(rig.controller.overlay().segments.is_empty());
-}
-
-#[test]
-fn overlay_visible_in_on_with_a_point_and_no_menu() {
-    let mut rig = Rig::new();
-    rig.start_sharp();
-    rig.chord(B);
-    let out = rig.frame();
-    assert!(out.show_overlay);
-    assert!(rig.controller.overlay_visible());
-    assert_eq!(rig.controller.overlay().point_count, 1);
-}
-
-#[test]
-fn overlay_hidden_while_a_menu_is_open() {
-    let mut rig = Rig::new();
-    rig.start_sharp();
-    rig.chord(B);
-    rig.frame();
-    let out = rig.frame_with(|s| s.menu_open = true);
-    assert_eq!(rig.controller.state(), FreecamState::On);
-    assert!(!out.show_overlay);
-    assert!(!rig.controller.overlay_visible());
-    assert!(rig.controller.overlay().markers.is_empty());
-    assert!(rig.controller.overlay().segments.is_empty());
-    let closed = rig.frame();
-    assert!(closed.show_overlay);
-    assert!(rig.controller.overlay_visible());
-}
-
-#[test]
-fn overlay_hidden_when_playing_off_or_exiting() {
-    let mut rig = Rig::new();
-    assert!(!rig.controller.overlay_visible());
-    rig.build_path(20);
-    rig.frame();
-    assert!(rig.controller.overlay_visible());
-    rig.play();
-    assert_eq!(rig.controller.state(), FreecamState::Playing);
-    assert!(!rig.controller.overlay_visible());
-    rig.frames(EXIT_WAIT + 5);
-    rig.begin_exit();
-    assert!(matches!(rig.controller.state(), FreecamState::Exiting { .. }));
-    assert!(!rig.controller.overlay_visible());
-    rig.frames(EXIT_WAIT);
-    assert_eq!(rig.controller.state(), FreecamState::Off);
-    assert!(!rig.controller.overlay_visible());
-}
-
-#[test]
 fn smooth_stop_leaves_camera_still() {
     let mut rig = Rig::new();
     rig.build_smooth_path(80);
     rig.play();
     rig.frames(EXIT_WAIT - 1 + 20);
     let here = Rig::pose(&rig.frame());
-    let stopped = rig.play();
+    let stopped = rig.stop();
     assert_eq!(rig.controller.state(), FreecamState::On);
     assert_eq!(Rig::pose(&stopped), here);
     rig.controller.on_key(CTRL, false);
@@ -854,4 +858,1486 @@ fn ctrl_p_during_playback_sends_nothing_until_the_clear() {
     }
     assert_eq!(exit[EXIT_WAIT - 1].camera, CameraCommand::Clear);
     assert_eq!(exit[EXIT_WAIT - 1].gui, GuiCommand::Show);
+}
+
+#[test]
+fn ctrl_e_turns_cursor_mode_on_and_releases_mouse() {
+    let mut rig = Rig::new();
+    rig.start();
+
+    let out = rig.cursor();
+
+    assert!(out.cursor_mode);
+    assert_eq!(out.mouse, MouseCommand::Release);
+    assert!(out.ui_visible);
+}
+
+#[test]
+fn cursor_mode_holds_without_repeating_release() {
+    let mut rig = Rig::new();
+    rig.start_with_cursor();
+
+    let out = rig.frame();
+
+    assert!(out.cursor_mode);
+    assert_eq!(out.mouse, MouseCommand::None);
+}
+
+#[test]
+fn ctrl_e_again_grabs_mouse() {
+    let mut rig = Rig::new();
+    rig.start_with_cursor();
+
+    let out = rig.cursor();
+
+    assert!(!out.cursor_mode);
+    assert_eq!(out.mouse, MouseCommand::Grab);
+}
+
+#[test]
+fn cursor_mode_needs_freecam() {
+    let mut rig = Rig::new();
+
+    let out = rig.cursor();
+
+    assert!(!out.cursor_mode);
+    assert_eq!(out.mouse, MouseCommand::None);
+}
+
+#[test]
+fn mouse_move_in_cursor_mode_does_not_turn_camera() {
+    let mut rig = Rig::new();
+    let before = Rig::pose(&rig.start());
+    rig.cursor();
+
+    rig.controller.on_mouse_move(500, 0);
+    let after = Rig::pose(&rig.frame());
+
+    assert_eq!(after.yaw, before.yaw);
+}
+
+#[test]
+fn movement_while_on_is_discarded_when_it_ends() {
+    let mut rig = Rig::new();
+    let before = Rig::pose(&rig.start());
+    rig.cursor();
+    rig.controller.on_mouse_move(500, 300);
+
+    let out = rig.cursor();
+
+    assert!(!out.cursor_mode);
+    assert_eq!(Rig::pose(&out).yaw, before.yaw);
+    assert_eq!(Rig::pose(&rig.frame()).yaw, before.yaw);
+}
+
+#[test]
+fn menu_ends_cursor_mode_without_grab() {
+    let mut rig = Rig::new();
+    rig.start_with_cursor();
+
+    let out = rig.frame_with(|status| status.menu_open = true);
+
+    assert!(!out.cursor_mode);
+    assert_eq!(out.mouse, MouseCommand::None);
+    assert!(!rig.frame().cursor_mode);
+}
+
+#[test]
+fn focus_loss_ends_cursor_mode_without_grab() {
+    let mut rig = Rig::new();
+    rig.start_with_cursor();
+
+    let out = rig.frame_with(|status| status.focused = false);
+
+    assert!(!out.cursor_mode);
+    assert_eq!(out.mouse, MouseCommand::None);
+}
+
+#[test]
+fn cursor_mode_does_not_start_while_unfocused() {
+    let mut rig = Rig::new();
+    rig.start();
+    rig.chord(E);
+
+    let out = rig.frame_with(|status| status.focused = false);
+
+    assert!(!out.cursor_mode);
+    assert_eq!(out.mouse, MouseCommand::None);
+}
+
+#[test]
+fn exit_grabs_mouse_when_in_play() {
+    let mut rig = Rig::new();
+    rig.start_with_cursor();
+
+    let out = rig.begin_exit();
+
+    assert!(!out.cursor_mode);
+    assert_eq!(out.mouse, MouseCommand::Grab);
+}
+
+#[test]
+fn leaving_world_ends_cursor_mode_without_grab() {
+    let mut rig = Rig::new();
+    rig.start_with_cursor();
+
+    let out = rig.frame_with(|status| {
+        status.in_world = false;
+        status.dimension = 1;
+    });
+
+    assert!(!out.cursor_mode);
+    assert_eq!(out.mouse, MouseCommand::None);
+}
+
+#[test]
+fn ctrl_e_during_playback_stops_and_keeps_bar_mode() {
+    let mut rig = Rig::new();
+    rig.build_path(40);
+    rig.play();
+    rig.frames(EXIT_WAIT + 5);
+    assert_eq!(rig.controller.state(), FreecamState::Playing);
+    let here = Rig::pose(&rig.frame());
+
+    let out = rig.stop();
+
+    assert_eq!(rig.controller.state(), FreecamState::On);
+    assert!(out.cursor_mode);
+    assert!(out.ui_visible);
+    assert_eq!(out.mouse, MouseCommand::Release);
+    assert_eq!(Rig::pose(&out), here);
+    assert!(rig.controller.ui_snapshot().playhead > 0.0);
+}
+
+#[test]
+fn playback_start_ends_cursor_mode() {
+    let mut rig = Rig::new();
+    rig.build_path(4);
+    rig.cursor();
+
+    let out = rig.play();
+
+    assert_eq!(rig.controller.state(), FreecamState::Playing);
+    assert!(!out.cursor_mode);
+    assert_eq!(out.mouse, MouseCommand::Grab);
+}
+
+#[test]
+fn right_drag_in_bar_mode_turns_camera() {
+    let mut look = Rig::new();
+    look.start();
+    look.frames(2);
+    let mut drag = Rig::new();
+    drag.start();
+    drag.cursor();
+    drag.controller.on_key(CTRL, false);
+    let before = drag.frame().render_override.unwrap();
+
+    assert!(drag.right(true));
+    drag.controller.on_mouse_move(300, 0);
+    let grab = drag.frame();
+
+    assert_eq!(grab.mouse, MouseCommand::DragGrab);
+    assert!(grab.look_drag);
+    assert!(grab.cursor_mode);
+    assert_eq!(Rig::pose(&grab).yaw, before.yaw);
+    look.frame();
+    look.controller.on_mouse_move(200, 50);
+    drag.controller.on_mouse_move(200, 50);
+    for _ in 0..5 {
+        let expected = Rig::pose(&look.frame());
+        let out = drag.frame();
+        assert_eq!(Rig::pose(&out), expected);
+        assert!(out.look_drag);
+        assert_eq!(out.mouse, MouseCommand::None);
+    }
+    assert_ne!(Rig::pose(&look.frame()).yaw, before.yaw);
+}
+
+#[test]
+fn right_press_over_ui_does_not_drag() {
+    let mut rig = Rig::new();
+    let before = Rig::pose(&rig.start());
+    rig.cursor();
+
+    rig.controller.set_pointer_over_ui(true);
+    assert!(rig.right(true));
+    let out = rig.frame();
+    rig.controller.on_mouse_move(500, 0);
+    rig.controller.set_pointer_over_ui(false);
+    let later = rig.frame();
+
+    assert_eq!(out.mouse, MouseCommand::None);
+    assert!(!out.look_drag);
+    assert!(!later.look_drag);
+    assert_eq!(later.mouse, MouseCommand::None);
+    assert_eq!(Rig::pose(&later).yaw, before.yaw);
+}
+
+#[test]
+fn drag_ends_on_release_without_jump() {
+    let mut rig = Rig::new();
+    rig.start_sharp();
+    rig.cursor();
+    rig.start_drag();
+    rig.controller.on_mouse_move(200, 0);
+    let turned = Rig::pose(&rig.frame());
+
+    rig.right(false);
+    let out = rig.frame();
+    rig.controller.on_mouse_move(500, 0);
+    let after = rig.frame();
+
+    assert_eq!(out.mouse, MouseCommand::DragRelease);
+    assert!(!out.look_drag);
+    assert!(out.cursor_mode);
+    assert_eq!(Rig::pose(&out).yaw, turned.yaw);
+    assert_eq!(Rig::pose(&after).yaw, turned.yaw);
+    assert_eq!(after.mouse, MouseCommand::None);
+}
+
+#[test]
+fn drag_ends_on_focus_loss_and_bar_off() {
+    let mut unfocused = Rig::new();
+    unfocused.start();
+    unfocused.cursor();
+    unfocused.start_drag();
+
+    let lost = unfocused.frame_with(|status| status.focused = false);
+    unfocused.right(false);
+    let back = unfocused.frame();
+
+    assert!(!lost.look_drag);
+    assert!(!lost.cursor_mode);
+    assert_eq!(lost.mouse, MouseCommand::None);
+    assert!(!back.look_drag);
+    assert_eq!(back.mouse, MouseCommand::Grab);
+
+    let mut bar_off = Rig::new();
+    bar_off.start();
+    bar_off.cursor();
+    bar_off.start_drag();
+
+    let off = bar_off.cursor();
+    let on_again = bar_off.cursor();
+    let held = bar_off.frame();
+
+    assert!(!off.look_drag);
+    assert!(!off.cursor_mode);
+    assert_eq!(off.mouse, MouseCommand::Grab);
+    assert!(on_again.cursor_mode);
+    assert_eq!(on_again.mouse, MouseCommand::Release);
+    assert!(!held.look_drag);
+    assert_eq!(held.mouse, MouseCommand::None);
+}
+
+#[test]
+fn drag_ends_on_menu_playback_and_exit() {
+    let mut menu = Rig::new();
+    menu.start();
+    menu.cursor();
+    menu.start_drag();
+    let out = menu.frame_with(|status| status.menu_open = true);
+    assert!(!out.look_drag);
+    assert_eq!(out.mouse, MouseCommand::None);
+
+    let mut playback = Rig::new();
+    playback.build_path(4);
+    playback.cursor();
+    playback.start_drag();
+    let out = playback.play();
+    assert_eq!(playback.controller.state(), FreecamState::Playing);
+    assert!(!out.look_drag);
+    assert_eq!(out.mouse, MouseCommand::Grab);
+
+    let mut exit = Rig::new();
+    exit.start();
+    exit.cursor();
+    exit.start_drag();
+    let out = exit.begin_exit();
+    assert!(!out.look_drag);
+    assert_eq!(out.mouse, MouseCommand::Grab);
+}
+
+#[test]
+fn right_press_outside_bar_mode_does_not_drag() {
+    let mut rig = Rig::new();
+    rig.start();
+
+    rig.right(true);
+    let out = rig.frame();
+    rig.right(false);
+
+    assert!(!out.look_drag);
+    assert_eq!(out.mouse, MouseCommand::None);
+    assert_eq!(rig.frame().mouse, MouseCommand::None);
+}
+
+#[test]
+fn wasd_still_flies_during_drag() {
+    let mut rig = Rig::new();
+    let start = rig.start_sharp();
+    rig.cursor();
+    rig.controller.on_key(CTRL, false);
+    rig.start_drag();
+
+    rig.controller.on_key(W, true);
+    rig.controller.on_mouse_move(100, 0);
+    rig.frame();
+    let out = rig.frame();
+
+    assert!(out.look_drag);
+    assert_ne!(Rig::pose(&out).position, start.position);
+    assert_ne!(Rig::pose(&out).yaw, start.yaw);
+}
+
+#[test]
+fn ui_visible_with_zero_points() {
+    let mut rig = Rig::new();
+    let out = rig.start();
+
+    assert!(out.ui_visible);
+    assert!(rig.controller.ui_snapshot().visible);
+    assert_eq!(rig.controller.ui_snapshot().point_count, 0);
+}
+
+#[test]
+fn ui_hidden_when_freecam_is_off() {
+    let mut rig = Rig::new();
+    let out = rig.frame();
+
+    assert!(!out.ui_visible);
+    assert!(!rig.controller.ui_snapshot().visible);
+}
+
+#[test]
+fn ui_hidden_under_menu_and_during_playback() {
+    let mut rig = Rig::new();
+    rig.build_path(4);
+
+    let menu = rig.frame_with(|status| status.menu_open = true);
+    assert!(!menu.ui_visible);
+    assert!(!rig.controller.ui_snapshot().visible);
+
+    rig.frame();
+    rig.play();
+    assert_eq!(rig.controller.state(), FreecamState::Playing);
+    assert!(!rig.controller.ui_snapshot().visible);
+}
+
+#[test]
+fn snapshot_reports_points_and_total_seconds() {
+    let mut rig = Rig::new();
+    rig.build_path(20);
+
+    let snapshot = rig.controller.ui_snapshot();
+
+    assert_eq!(snapshot.point_count, 2);
+    assert!(snapshot.total_seconds > 0.0);
+}
+
+#[test]
+fn snapshot_reports_cursor_mode() {
+    let mut rig = Rig::new();
+    rig.start_with_cursor();
+
+    assert!(rig.controller.ui_snapshot().cursor_mode);
+}
+
+#[test]
+fn legend_follows_the_key_config() {
+    let rig = Rig::new();
+
+    assert_eq!(rig.controller.legend().rows.len(), 5);
+}
+
+#[test]
+fn dimension_change_in_world_ends_cursor_mode() {
+    let mut rig = Rig::new();
+    rig.start_with_cursor();
+
+    let out = rig.frame_with(|status| status.dimension = 1);
+
+    assert!(matches!(rig.controller.state(), FreecamState::Exiting { .. }));
+    assert!(!out.cursor_mode);
+    assert_eq!(out.mouse, MouseCommand::Grab);
+}
+
+#[test]
+fn damage_ends_cursor_mode() {
+    let mut rig = Rig::new();
+    rig.start_with_cursor();
+
+    let out = rig.frame_with(|status| status.health = 19);
+
+    assert!(matches!(rig.controller.state(), FreecamState::Exiting { .. }));
+    assert!(!out.cursor_mode);
+    assert_eq!(out.mouse, MouseCommand::Grab);
+}
+
+#[test]
+fn server_handover_ends_cursor_mode() {
+    let mut rig = Rig::new();
+    rig.start_with_cursor();
+    rig.controller.on_server_instruction(ServerInstruction::SetOrClear);
+
+    let out = rig.frame();
+
+    assert_eq!(rig.controller.state(), FreecamState::Off);
+    assert!(!out.cursor_mode);
+    assert_eq!(out.mouse, MouseCommand::Grab);
+}
+
+#[test]
+fn focus_return_grabs_once_after_focus_loss() {
+    let mut rig = Rig::new();
+    rig.start_with_cursor();
+    assert_eq!(rig.frame_with(|status| status.focused = false).mouse, MouseCommand::None);
+    assert_eq!(rig.frame_with(|status| status.focused = false).mouse, MouseCommand::None);
+
+    assert_eq!(rig.frame().mouse, MouseCommand::Grab);
+    assert_eq!(rig.frame().mouse, MouseCommand::None);
+    assert_eq!(rig.frame().mouse, MouseCommand::None);
+}
+
+#[test]
+fn menu_after_focus_loss_cancels_pending_grab() {
+    let mut rig = Rig::new();
+    rig.start_with_cursor();
+    rig.frame_with(|status| status.focused = false);
+
+    assert_eq!(rig.frame_with(|status| status.menu_open = true).mouse, MouseCommand::None);
+
+    assert_eq!(rig.frame().mouse, MouseCommand::None);
+}
+
+#[test]
+fn leaving_the_world_after_focus_loss_cancels_pending_grab() {
+    let mut rig = Rig::new();
+    rig.start_with_cursor();
+    rig.frame_with(|status| status.focused = false);
+
+    rig.frame_with(|status| status.in_world = false);
+
+    assert_eq!(rig.frame().mouse, MouseCommand::None);
+}
+
+#[test]
+fn menu_closing_after_cursor_mode_issues_no_grab() {
+    let mut rig = Rig::new();
+    rig.start_with_cursor();
+    assert_eq!(rig.frame_with(|status| status.menu_open = true).mouse, MouseCommand::None);
+
+    assert_eq!(rig.frame().mouse, MouseCommand::None);
+    assert_eq!(rig.frame().mouse, MouseCommand::None);
+}
+
+#[test]
+fn wheel_over_the_ui_in_cursor_mode_does_not_change_speed() {
+    let mut rig = Rig::new();
+    rig.build_path(20);
+    let before = rig.controller.ui_snapshot().total_seconds;
+    rig.cursor();
+
+    rig.controller.set_pointer_over_ui(true);
+    assert!(rig.controller.on_mouse_button(4, 120));
+    rig.frame();
+
+    assert!(rig.controller.ui_snapshot().cursor_mode);
+    assert_eq!(rig.controller.ui_snapshot().total_seconds, before);
+}
+
+#[test]
+fn wheel_off_the_ui_in_cursor_mode_changes_speed() {
+    let mut rig = Rig::new();
+    rig.build_path(20);
+    let before = rig.controller.ui_snapshot().total_seconds;
+    rig.cursor();
+
+    rig.controller.set_pointer_over_ui(false);
+    assert!(rig.controller.on_mouse_button(4, 120));
+    rig.frame();
+
+    assert!(rig.controller.ui_snapshot().cursor_mode);
+    assert_ne!(rig.controller.ui_snapshot().total_seconds, before);
+}
+
+#[test]
+fn wheel_outside_cursor_mode_changes_speed() {
+    let mut rig = Rig::new();
+    rig.build_path(20);
+    let before = rig.controller.ui_snapshot().total_seconds;
+
+    assert!(rig.controller.on_mouse_button(4, 120));
+    rig.frame();
+
+    assert_ne!(rig.controller.ui_snapshot().total_seconds, before);
+}
+
+#[test]
+fn wheel_notches_over_the_ui_do_not_leak_after_cursor_mode_ends() {
+    let mut rig = Rig::new();
+    rig.build_path(20);
+    let before = rig.controller.ui_snapshot().total_seconds;
+    rig.cursor();
+    rig.controller.set_pointer_over_ui(true);
+    rig.controller.on_mouse_button(4, 120);
+    rig.controller.set_pointer_over_ui(false);
+
+    rig.cursor();
+    rig.frame();
+
+    assert_eq!(rig.controller.ui_snapshot().total_seconds, before);
+}
+
+// a rig with two points and the cursor mode on
+fn cursor_rig_with_points() -> Rig {
+    let mut rig = Rig::new();
+    rig.build_path(4);
+    rig.cursor();
+    rig
+}
+
+// runs frames until `seconds` have passed
+fn run_for(rig: &mut Rig, seconds: f64) {
+    rig.frames((seconds / FRAME_STEP).ceil() as usize);
+}
+
+#[test]
+fn clear_needs_two_clicks_within_arm_time() {
+    let mut rig = cursor_rig_with_points();
+    assert!(!rig.controller.ui_snapshot().clear_armed);
+
+    rig.controller.apply_ui_action(UiAction::ClearPoints);
+    assert!(rig.controller.ui_snapshot().clear_armed);
+    assert_eq!(rig.controller.path().points().len(), 2);
+
+    run_for(&mut rig, 2.0);
+    rig.controller.apply_ui_action(UiAction::ClearPoints);
+
+    assert!(rig.controller.path().points().is_empty());
+    assert!(!rig.controller.ui_snapshot().clear_armed);
+}
+
+#[test]
+fn clear_arm_expires_after_three_seconds() {
+    let mut rig = cursor_rig_with_points();
+    rig.controller.apply_ui_action(UiAction::ClearPoints);
+
+    run_for(&mut rig, 3.2);
+    assert!(!rig.controller.ui_snapshot().clear_armed);
+    rig.controller.apply_ui_action(UiAction::ClearPoints);
+
+    assert_eq!(rig.controller.path().points().len(), 2);
+    assert!(rig.controller.ui_snapshot().clear_armed);
+}
+
+#[test]
+fn clear_disarms_when_cursor_mode_ends() {
+    let mut rig = cursor_rig_with_points();
+    rig.controller.apply_ui_action(UiAction::ClearPoints);
+
+    rig.cursor();
+    assert!(!rig.controller.ui_snapshot().cursor_mode);
+    assert!(!rig.controller.ui_snapshot().clear_armed);
+    rig.cursor();
+    rig.controller.apply_ui_action(UiAction::ClearPoints);
+
+    assert_eq!(rig.controller.path().points().len(), 2);
+}
+
+#[test]
+fn clear_disarms_when_ui_hides() {
+    let mut rig = cursor_rig_with_points();
+    rig.controller.apply_ui_action(UiAction::ClearPoints);
+
+    rig.frame_with(|status| status.menu_open = true);
+    assert!(!rig.controller.ui_snapshot().clear_armed);
+    rig.frame();
+    rig.cursor();
+    rig.controller.apply_ui_action(UiAction::ClearPoints);
+
+    assert_eq!(rig.controller.path().points().len(), 2);
+}
+
+#[test]
+fn clear_with_no_points_does_nothing() {
+    let mut rig = Rig::new();
+    rig.start_with_cursor();
+
+    rig.controller.apply_ui_action(UiAction::ClearPoints);
+
+    assert!(!rig.controller.ui_snapshot().clear_armed);
+    rig.controller.apply_ui_action(UiAction::ClearPoints);
+    assert!(rig.controller.path().points().is_empty());
+}
+
+#[test]
+fn clear_outside_cursor_mode_does_nothing() {
+    let mut rig = Rig::new();
+    rig.build_path(4);
+
+    rig.controller.apply_ui_action(UiAction::ClearPoints);
+    rig.controller.apply_ui_action(UiAction::ClearPoints);
+
+    assert_eq!(rig.controller.path().points().len(), 2);
+}
+
+#[test]
+fn camera_not_owned_while_off() {
+    let mut rig = Rig::new();
+    assert!(rig.frames(3).iter().all(|out| !out.camera_owned));
+}
+
+#[test]
+fn camera_owned_after_toggle_on() {
+    let mut rig = Rig::new();
+    assert!(rig.start().camera_owned);
+    assert!(rig.frames(3).iter().all(|out| out.camera_owned));
+}
+
+#[test]
+fn camera_owned_during_playback() {
+    let mut rig = Rig::new();
+    rig.build_path(40);
+    assert!(rig.play().camera_owned);
+    assert_eq!(rig.controller.state(), FreecamState::Playing);
+    assert!(rig.frames(5).iter().all(|out| out.camera_owned));
+}
+
+#[test]
+fn camera_owned_through_exit_wait_until_off() {
+    let mut rig = Rig::new();
+    rig.start();
+    assert!(rig.begin_exit().camera_owned);
+    let rest = rig.frames(EXIT_WAIT - 1);
+    assert!(rest[..EXIT_WAIT - 2].iter().all(|out| out.camera_owned));
+    assert_eq!(rest[EXIT_WAIT - 2].camera, CameraCommand::Clear);
+    assert!(!rest[EXIT_WAIT - 2].camera_owned);
+    assert_eq!(rig.controller.state(), FreecamState::Off);
+    assert!(!rig.frame().camera_owned);
+}
+
+#[test]
+fn camera_not_owned_after_forced_exit() {
+    let mut rig = Rig::new();
+    rig.start();
+    rig.controller.on_server_instruction(ServerInstruction::SetOrClear);
+    assert!(!rig.frame().camera_owned);
+    assert!(!rig.frame().camera_owned);
+}
+
+// one way for freecam to leave editing
+type Exit = fn(&mut Rig);
+
+// a rig with a two-point path whose markers have all been sent
+fn marker_rig() -> Rig {
+    let mut rig = Rig::new();
+    rig.build_path(20);
+    rig.frames(3);
+    rig
+}
+
+#[test]
+fn markers_show_when_freecam_on_with_points() {
+    let rig = marker_rig();
+    let shapes: Vec<&MarkerShape> = rig.world.values().collect();
+    assert!(shapes.iter().any(|shape| shape.kind == MarkerKind::Arrow));
+    assert!(shapes.iter().any(|shape| shape.kind == MarkerKind::Line && shape.color == 0xFF4B_E35A));
+    assert!(rig.batch_sizes.iter().all(|size| *size <= MarkerConfig::default().max_per_send));
+    assert_eq!(rig.last_batch_size(), 0);
+}
+
+#[test]
+fn markers_hide_on_playback_start_and_return_after() {
+    let mut rig = marker_rig();
+    let shown = rig.world.clone();
+    rig.play();
+    assert_eq!(rig.controller.state(), FreecamState::Playing);
+    assert!(rig.world.is_empty());
+    rig.frames(EXIT_WAIT - 1);
+    assert_eq!(rig.controller.state(), FreecamState::Playing);
+    assert!(rig.world.is_empty());
+    rig.frames(50);
+    assert_eq!(rig.controller.state(), FreecamState::On);
+    rig.frames(2);
+    assert_eq!(rig.world, shown);
+}
+
+#[test]
+fn markers_hide_on_freecam_off_and_each_forced_exit() {
+    let exits: [(&str, Exit); 4] = [
+        ("toggle", |rig| {
+            rig.begin_exit();
+        }),
+        ("damage", |rig| {
+            rig.frame_with(|status| status.health = 19);
+        }),
+        ("dimension", |rig| {
+            rig.frame_with(|status| status.dimension = 1);
+        }),
+        ("handover", |rig| {
+            rig.controller.on_server_instruction(ServerInstruction::SetOrClear);
+            rig.frame();
+        }),
+    ];
+    for (name, exit) in exits {
+        let mut rig = marker_rig();
+        assert!(!rig.world.is_empty(), "{name}");
+        exit(&mut rig);
+        assert!(rig.world.is_empty(), "{name}");
+        rig.frames(EXIT_WAIT + 2);
+        assert!(rig.world.is_empty(), "{name}");
+    }
+}
+
+#[test]
+fn world_rejoin_resends_markers() {
+    let mut rig = marker_rig();
+    let shown = rig.world.clone();
+    rig.frame_with(|status| status.in_world = false);
+    // the client drops every shape with the world, so nothing is owed for them
+    rig.world.clear();
+    rig.frame();
+    assert!(rig.batch_sizes[rig.batch_sizes.len() - 2..].iter().all(|size| *size == 0));
+
+    // the smooth camera is still off from the first session
+    rig.start();
+    rig.chord(B);
+    rig.walk(20);
+    rig.chord(B);
+    rig.controller.on_key(CTRL, false);
+    rig.frames(3);
+
+    assert_eq!(rig.world, shown);
+}
+
+#[test]
+fn fov_change_over_one_percent_rebuilds() {
+    let mut rig = marker_rig();
+    rig.frame_with(|status| status.fov_y_degrees = 70.5);
+    assert_eq!(rig.last_batch_size(), 0);
+    rig.frame_with(|status| status.fov_y_degrees = 72.0);
+    assert!(rig.last_batch_size() > 0);
+    rig.frame();
+    assert!(rig.last_batch_size() > 0);
+    rig.frame_with(|status| status.aspect = 16.0 / 9.0 * 1.005);
+    assert_eq!(rig.last_batch_size(), 0);
+    rig.frame_with(|status| status.aspect = 16.0 / 9.0 * 1.02);
+    assert!(rig.last_batch_size() > 0);
+}
+
+#[test]
+fn markers_disabled_sends_nothing() {
+    let config =
+        FreecamConfig { markers: MarkerConfig { enabled: false, ..MarkerConfig::default() }, ..Rig::config(false) };
+    let mut rig = Rig::with_config(config);
+    rig.build_path(20);
+    rig.frames(3);
+    rig.play();
+    rig.frames(EXIT_WAIT + 40);
+    rig.begin_exit();
+    rig.frames(EXIT_WAIT + 2);
+    assert!(rig.batch_sizes.iter().all(|size| *size == 0));
+}
+
+#[test]
+fn clear_points_removes_all_markers() {
+    let mut rig = cursor_rig_with_points();
+    rig.frames(3);
+    assert!(!rig.world.is_empty());
+    rig.controller.apply_ui_action(UiAction::ClearPoints);
+    rig.controller.apply_ui_action(UiAction::ClearPoints);
+    rig.frame();
+    assert!(rig.world.is_empty());
+    assert_eq!(rig.controller.state(), FreecamState::On);
+}
+
+#[test]
+fn shutdown_batch_removes_every_live_marker() {
+    let mut rig = marker_rig();
+    let live = rig.world.len();
+    let removes = rig.controller.marker_shutdown_batch().to_vec();
+    assert_eq!(removes.len(), live);
+    for entry in &removes {
+        assert_eq!(entry.shape.kind, MarkerKind::Remove);
+        rig.world.remove(&entry.id);
+    }
+    assert!(rig.world.is_empty());
+    assert!(rig.controller.marker_batch().is_empty());
+}
+
+#[test]
+fn frames_after_the_shutdown_batch_build_no_markers() {
+    let mut rig = marker_rig();
+    for entry in rig.controller.marker_shutdown_batch().to_vec() {
+        rig.world.remove(&entry.id);
+    }
+
+    rig.chord(B);
+    rig.frames(3);
+
+    assert_eq!(rig.controller.state(), FreecamState::On);
+    assert!(rig.world.is_empty());
+    assert!(rig.batch_sizes.iter().rev().take(3).all(|size| *size == 0));
+}
+
+#[test]
+fn add_point_requests_a_ray_from_the_camera() {
+    let mut rig = Rig::look_at();
+    let pose = rig.start_sharp();
+    rig.chord(B);
+    let out = rig.frame();
+    let expected = RayRequest { origin: pose.position, direction: pose.forward(), max_distance: 256.0 };
+    assert_eq!(out.ray, Some(expected));
+    assert!(rig.controller.path().keys().is_empty());
+    assert_eq!(rig.frame().ray, None);
+}
+
+#[test]
+fn ray_hit_stores_target() {
+    let mut rig = Rig::look_at();
+    let pose = rig.start_sharp();
+    rig.chord(B);
+    rig.frame();
+    let target = Vec3::new(4.0, 60.0, 12.0);
+    rig.controller.on_ray_result(Some(target));
+    assert_eq!(rig.controller.path().keys(), &[PathKey::new(pose, Some(target))]);
+    rig.frames(3);
+    assert_eq!(rig.controller.path().keys().len(), 1);
+}
+
+#[test]
+fn ray_miss_stores_plain_key() {
+    let mut rig = Rig::look_at();
+    let pose = rig.start_sharp();
+    rig.chord(B);
+    rig.frame();
+    rig.controller.on_ray_result(None);
+    assert_eq!(rig.controller.path().keys(), &[PathKey::new(pose, None)]);
+    rig.frames(3);
+    assert_eq!(rig.controller.path().keys().len(), 1);
+}
+
+#[test]
+fn no_answer_in_two_frames_stores_plain_key() {
+    let mut rig = Rig::look_at();
+    let pose = rig.start_sharp();
+    rig.chord(B);
+    assert!(rig.frame().ray.is_some());
+    rig.frame();
+    assert!(rig.controller.path().keys().is_empty());
+    rig.frame();
+    assert_eq!(rig.controller.path().keys(), &[PathKey::new(pose, None)]);
+    // an answer after the timeout changes nothing
+    rig.controller.on_ray_result(Some(Vec3::new(1.0, 2.0, 3.0)));
+    assert_eq!(rig.controller.path().keys(), &[PathKey::new(pose, None)]);
+}
+
+#[test]
+fn look_at_disabled_adds_plain_key_at_once() {
+    let mut rig = Rig::new();
+    let pose = rig.start_sharp();
+    rig.chord(B);
+    assert_eq!(rig.controller.path().keys(), &[PathKey::new(pose, None)]);
+    assert_eq!(rig.frame().ray, None);
+}
+
+#[test]
+fn play_right_after_add_point_keeps_the_new_key() {
+    let mut rig = Rig::look_at();
+    let first = rig.start_sharp();
+    rig.chord(B);
+    rig.frame();
+    rig.controller.on_ray_result(None);
+    let last = rig.walk(20);
+    rig.chord(B);
+    rig.play();
+    assert_eq!(rig.controller.state(), FreecamState::Playing);
+    assert_eq!(rig.controller.path().points(), &[first, last]);
+}
+
+#[test]
+fn playback_waits_for_marker_removal_before_moving() {
+    // 50 entries per send drains a 256-key path's markers over far more frames than the settle
+    let config =
+        FreecamConfig { markers: MarkerConfig { max_per_send: 50, ..MarkerConfig::default() }, ..Rig::config(false) };
+    let mut rig = Rig::with_config(config);
+    let first = rig.start_sharp();
+    for _ in 0..256 {
+        rig.chord(B);
+        rig.walk(2);
+    }
+    rig.controller.on_key(CTRL, false);
+    for _ in 0..1000 {
+        rig.frame();
+        if rig.last_batch_size() == 0 {
+            break;
+        }
+    }
+    assert_eq!(rig.controller.path().keys().len(), 256);
+    let live = rig.world.len();
+    assert!(live > 50 * EXIT_WAIT, "{live} live shapes");
+
+    rig.play();
+    let mut frames = 1;
+    while Rig::pose(&rig.frame()) == first {
+        frames += 1;
+        assert!(frames < 1000);
+    }
+
+    assert!(rig.world.is_empty(), "{} shapes left on the first moving frame", rig.world.len());
+    assert!(frames > EXIT_WAIT, "moved after {frames} frames");
+}
+
+#[test]
+fn handler_recapture_resends_every_slot() {
+    let mut rig = marker_rig();
+    let shown = rig.world.clone();
+    assert!(!shown.is_empty());
+    rig.generation = 2;
+    let mut resent = HashMap::new();
+    for _ in 0..100 {
+        rig.frame();
+        let batch = rig.controller.marker_batch();
+        if batch.is_empty() {
+            break;
+        }
+        for entry in batch {
+            resent.insert(entry.id, entry.shape);
+        }
+    }
+    assert_eq!(resent, shown);
+    assert_eq!(rig.world, shown);
+}
+
+#[test]
+fn no_handler_sends_nothing() {
+    let mut rig = Rig::new();
+    rig.generation = 0;
+    rig.build_path(20);
+    rig.frames(3);
+    assert!(rig.batch_sizes.iter().all(|size| *size == 0));
+    assert!(rig.world.is_empty());
+
+    // nothing was marked sent, so the first capture delivers every shape
+    rig.generation = 1;
+    rig.frames(20);
+    let mut reference = marker_rig();
+    reference.frames(20);
+    assert!(!rig.world.is_empty());
+    assert_eq!(rig.world, reference.world);
+}
+
+#[test]
+fn playback_settle_is_bounded_when_markers_cannot_drain() {
+    let mut rig = Rig::new();
+    let (first, _) = rig.build_path(20);
+    rig.frames(3);
+    assert!(!rig.world.is_empty());
+    rig.generation = 0;
+    let defaults = MarkerConfig::default();
+    let bound = EXIT_WAIT + defaults.max_shapes.div_ceil(defaults.max_per_send);
+
+    rig.play();
+    let mut frames = 1;
+    while Rig::pose(&rig.frame()) == first {
+        frames += 1;
+        assert!(frames <= bound + 2, "still settling after {frames} frames");
+    }
+
+    assert!(frames > EXIT_WAIT, "moved after {frames} frames");
+    assert_eq!(rig.controller.state(), FreecamState::Playing);
+}
+
+#[test]
+fn add_moves_playhead_to_new_point_and_keeps_selection() {
+    let mut rig = Rig::new();
+    let [p0, p1, p2] = rig.three_points();
+    rig.bar_on();
+    rig.click(UiAction::SelectPoint(0));
+    let new = rig.walk(5);
+
+    rig.click(UiAction::AddPoint);
+
+    assert_eq!(rig.controller.path().points(), &[p0, new, p1, p2]);
+    let snapshot = rig.controller.ui_snapshot();
+    assert_eq!(snapshot.selection, Some(0));
+    assert_eq!(snapshot.playhead, rig.point_distance(1));
+
+    rig.click(UiAction::SelectPoint(3));
+    let early = rig.point_distance(1) * 0.5;
+    rig.click(UiAction::Scrub(early));
+    assert_eq!(rig.controller.ui_snapshot().selection, Some(3));
+    let pose = rig.walk(3);
+    rig.click(UiAction::AddPoint);
+
+    assert_eq!(rig.controller.path().points()[1], pose);
+    let after = rig.controller.ui_snapshot();
+    assert_eq!(after.selection, Some(4));
+    assert_eq!(rig.controller.path().points()[4], p2);
+    assert_eq!(after.playhead, rig.point_distance(1));
+}
+
+#[test]
+fn ctrl_b_inserts_at_the_playhead() {
+    let mut rig = Rig::new();
+    let [p0, p1, p2] = rig.three_points();
+    rig.bar_on();
+    rig.click(UiAction::Rewind);
+    rig.cursor();
+    let new = rig.walk(4);
+
+    rig.chord(B);
+
+    assert_eq!(rig.controller.path().points(), &[p0, new, p1, p2]);
+    assert_eq!(rig.controller.ui_snapshot().playhead, rig.point_distance(1));
+}
+
+#[test]
+fn select_moves_playhead_and_camera() {
+    let mut rig = Rig::new();
+    let [_, p1, _] = rig.three_points();
+    rig.bar_on();
+    rig.walk(10);
+
+    let out = rig.click(UiAction::SelectPoint(1));
+
+    assert_eq!(Rig::pose(&out), p1);
+    let snapshot = rig.controller.ui_snapshot();
+    assert_eq!(snapshot.selection, Some(1));
+    assert_eq!(snapshot.playhead, rig.point_distance(1));
+    assert_eq!(Rig::pose(&rig.frame()), p1);
+}
+
+#[test]
+fn select_uses_look_at_aim() {
+    let mut rig = Rig::look_at();
+    let first = rig.start_sharp();
+    rig.chord(B);
+    rig.frame();
+    // 30 degrees off the key's own view, inside the angle where the aim is trusted
+    let target = first.position + CameraPose::new(first.position, first.yaw - 30.0, first.pitch).forward() * 12.0;
+    rig.controller.on_ray_result(Some(target));
+    rig.walk(20);
+    rig.chord(B);
+    rig.frame();
+    rig.controller.on_ray_result(None);
+    rig.controller.on_key(CTRL, false);
+    rig.bar_on();
+    rig.walk(10);
+    let aim = (target - first.position).normalized();
+
+    let selected = Rig::pose(&rig.click(UiAction::SelectPoint(0)));
+
+    assert!(Rig::gap(selected, first) < 1e-4);
+    assert!(selected.forward().dot(aim) > 0.999, "forward {:?} aim {aim:?}", selected.forward());
+    assert!(first.forward().dot(aim) < 0.9);
+
+    rig.click(UiAction::SelectPoint(0));
+    rig.walk(10);
+    let scrubbed = Rig::pose(&rig.click(UiAction::Scrub(0.0)));
+    assert!(Rig::gap(scrubbed, first) < 1e-4);
+    assert!(scrubbed.forward().dot(aim) > 0.999);
+}
+
+#[test]
+fn deselect_does_not_move_camera() {
+    let mut rig = Rig::new();
+    rig.three_points();
+    rig.bar_on();
+    rig.click(UiAction::SelectPoint(1));
+    let away = rig.walk(10);
+    let playhead = rig.controller.ui_snapshot().playhead;
+
+    let out = rig.click(UiAction::SelectPoint(1));
+
+    assert_eq!(Rig::pose(&out), away);
+    let snapshot = rig.controller.ui_snapshot();
+    assert_eq!(snapshot.selection, None);
+    assert_eq!(snapshot.playhead, playhead);
+}
+
+#[test]
+fn scrub_sets_camera_to_curve_pose() {
+    let mut rig = Rig::new();
+    let [_, p1, _] = rig.three_points();
+    rig.bar_on();
+    rig.click(UiAction::SelectPoint(1));
+    let length = rig.controller.path().curve().length();
+    let distance = length * 0.3;
+    let expected = rig.controller.path().curve().pose_at(distance);
+
+    let out = rig.click(UiAction::Scrub(distance));
+
+    let pose = Rig::pose(&out);
+    assert!(Rig::gap(pose, expected) < 1e-4);
+    assert!((pose.yaw - expected.yaw).abs() < 1e-3);
+    assert!((pose.pitch - expected.pitch).abs() < 1e-3);
+    assert!(Rig::gap(pose, p1) > 0.1);
+    let snapshot = rig.controller.ui_snapshot();
+    assert_eq!(snapshot.playhead, distance);
+    assert_eq!(snapshot.selection, Some(1));
+}
+
+#[test]
+fn replace_changes_only_selected_key() {
+    let mut rig = Rig::look_at();
+    let first = rig.start_sharp();
+    let mut keys = vec![first];
+    for _ in 0..2 {
+        rig.chord(B);
+        rig.frame();
+        rig.controller.on_ray_result(None);
+        keys.push(rig.walk(20));
+    }
+    rig.chord(B);
+    rig.frame();
+    rig.controller.on_ray_result(None);
+    rig.controller.on_key(CTRL, false);
+    rig.bar_on();
+    rig.click(UiAction::SelectPoint(1));
+    let here = rig.walk(6);
+    let hit = here.position + Vec3::new(3.0, 0.0, 3.0);
+
+    let out = rig.click(UiAction::Replace);
+
+    assert_eq!(out.ray, Some(RayRequest { origin: here.position, direction: here.forward(), max_distance: 256.0 }));
+    assert_eq!(rig.controller.path().points()[1], keys[1]);
+    rig.controller.on_ray_result(Some(hit));
+    let stored = rig.controller.path().keys();
+    assert_eq!(stored.len(), 3);
+    assert_eq!(stored[0], PathKey::new(keys[0], None));
+    assert_eq!(stored[1], PathKey::new(here, Some(hit)));
+    assert_eq!(stored[2], PathKey::new(keys[2], None));
+    let snapshot = rig.controller.ui_snapshot();
+    assert_eq!(snapshot.selection, Some(1));
+    assert_eq!(snapshot.playhead, rig.point_distance(1));
+}
+
+#[test]
+fn replace_without_selection_does_nothing() {
+    let mut rig = Rig::new();
+    let points = rig.three_points();
+    rig.bar_on();
+    rig.walk(5);
+
+    rig.click(UiAction::Replace);
+
+    assert_eq!(rig.controller.path().points(), &points);
+}
+
+#[test]
+fn delete_moves_playhead_back_and_clears_selection() {
+    let mut rig = Rig::new();
+    let [p0, p1, _] = rig.three_points();
+    rig.bar_on();
+    rig.click(UiAction::SelectPoint(2));
+
+    rig.click(UiAction::Delete);
+
+    assert_eq!(rig.controller.path().points(), &[p0, p1]);
+    let snapshot = rig.controller.ui_snapshot();
+    assert_eq!(snapshot.selection, None);
+    assert_eq!(snapshot.playhead, rig.point_distance(1));
+
+    rig.click(UiAction::SelectPoint(0));
+    rig.cursor();
+    rig.press_delete();
+    rig.frame();
+
+    assert_eq!(rig.controller.path().points(), &[p1]);
+    let snapshot = rig.controller.ui_snapshot();
+    assert_eq!(snapshot.selection, None);
+    assert_eq!(snapshot.playhead, 0.0);
+}
+
+#[test]
+fn play_starts_at_playhead_and_from_start_at_end() {
+    let mut rig = Rig::new();
+    let [p0, p1, p2] = rig.three_points();
+    rig.bar_on();
+    rig.click(UiAction::SelectPoint(1));
+
+    let settle = rig.play();
+
+    assert_eq!(rig.controller.state(), FreecamState::Playing);
+    assert_eq!(Rig::pose(&settle), p1);
+    let mut last = settle;
+    for _ in 0..400 {
+        if rig.controller.state() != FreecamState::Playing {
+            break;
+        }
+        last = rig.frame();
+    }
+    assert_eq!(rig.controller.state(), FreecamState::On);
+    assert_eq!(Rig::pose(&last), p2);
+    assert_eq!(rig.controller.ui_snapshot().playhead, rig.controller.path().curve().length());
+
+    let again = rig.play();
+
+    assert_eq!(rig.controller.state(), FreecamState::Playing);
+    assert_eq!(Rig::pose(&again), p0);
+}
+
+#[test]
+fn bar_hidden_while_playing_and_back_after() {
+    let mut rig = Rig::new();
+    rig.build_path(20);
+
+    let start = rig.play();
+
+    assert!(!start.ui_visible);
+    assert!(!start.cursor_mode);
+    let snapshot = rig.controller.ui_snapshot();
+    assert!(snapshot.playing);
+    assert!(!snapshot.visible);
+    let mut back = None;
+    for _ in 0..400 {
+        let out = rig.frame();
+        if rig.controller.state() != FreecamState::Playing {
+            back = Some(out);
+            break;
+        }
+        assert!(!out.ui_visible);
+        assert!(!out.cursor_mode);
+    }
+    let back = back.unwrap();
+    assert!(back.ui_visible);
+    assert!(back.cursor_mode);
+    assert_eq!(back.mouse, MouseCommand::Release);
+    assert!(!rig.controller.ui_snapshot().playing);
+}
+
+#[test]
+fn rewind_goes_to_point_one_and_clears_selection() {
+    let mut rig = Rig::new();
+    let [p0, _, _] = rig.three_points();
+    rig.bar_on();
+    rig.click(UiAction::SelectPoint(2));
+    rig.walk(5);
+
+    let out = rig.click(UiAction::Rewind);
+
+    assert_eq!(Rig::pose(&out), p0);
+    let snapshot = rig.controller.ui_snapshot();
+    assert_eq!(snapshot.selection, None);
+    assert_eq!(snapshot.playhead, 0.0);
+}
+
+#[test]
+fn playhead_seconds_matches_playback_time() {
+    let mut rig = Rig::new();
+    let (first, _) = rig.build_path(80);
+    let mut previous = Rig::pose(&rig.play());
+    assert_eq!(previous, first);
+    let mut moving = 0;
+    for _ in 0..(EXIT_WAIT + 40) {
+        let pose = Rig::pose(&rig.frame());
+        if pose != previous {
+            moving += 1;
+        }
+        previous = pose;
+    }
+
+    rig.stop();
+
+    let snapshot = rig.controller.ui_snapshot();
+    let elapsed = moving as f32 * FRAME_STEP as f32;
+    assert!(moving > 20);
+    assert!((snapshot.playhead_seconds - elapsed).abs() < 2e-3, "{} vs {elapsed}", snapshot.playhead_seconds);
+    assert_eq!(snapshot.total_seconds, rig.controller.path().shot_seconds(snapshot.speed));
+}
+
+#[test]
+fn bar_off_after_select_keeps_pose() {
+    const TURN: i32 = 400;
+    const LOOK: i32 = 20;
+    let sensitivity = MotionConfig::default().sensitivity;
+    let mut rig = Rig::new();
+    let (first, _) = rig.build_smooth_path(20);
+    // the camera turns away from the key yaw, so a look goal that was not reset would differ from it
+    rig.controller.on_mouse_move(TURN, 0);
+    rig.frames(40);
+    rig.bar_on();
+    rig.walk(10);
+    let turned = Rig::pose(&rig.frames(40)[39]);
+    assert!((turned.yaw - first.yaw - TURN as f32 * sensitivity).abs() < 0.5, "turned {turned:?}");
+
+    let selected = Rig::pose(&rig.click(UiAction::SelectPoint(0)));
+    let off = rig.cursor();
+    rig.controller.on_key(CTRL, false);
+    let still = rig.frames(5);
+    rig.controller.on_mouse_move(LOOK, 0);
+    let looked = rig.frames(60);
+
+    assert_eq!(selected, first);
+    assert!(!off.cursor_mode);
+    assert_eq!(Rig::pose(&off), selected);
+    for out in still {
+        assert_eq!(Rig::pose(&out), selected);
+    }
+    // the smooth camera eases from the selected yaw to the selected yaw plus the mouse turn, never past it
+    let goal = selected.yaw + LOOK as f32 * sensitivity;
+    let mut previous = selected.yaw;
+    for out in &looked {
+        let pose = Rig::pose(out);
+        assert!(pose.yaw >= previous && pose.yaw <= goal + 1e-4, "yaw {} after {previous}, goal {goal}", pose.yaw);
+        assert_eq!(pose.pitch, selected.pitch);
+        assert_eq!(pose.position, selected.position);
+        previous = pose.yaw;
+    }
+    assert!((previous - goal).abs() < 1e-3, "settled at {previous}, goal {goal}");
+}
+
+#[test]
+fn selection_and_playhead_clamp_after_clear_and_world_change() {
+    let mut rig = Rig::new();
+    rig.three_points();
+    rig.bar_on();
+    rig.click(UiAction::SelectPoint(2));
+
+    rig.controller.apply_ui_action(UiAction::ClearPoints);
+    rig.controller.apply_ui_action(UiAction::ClearPoints);
+
+    let cleared = rig.controller.ui_snapshot();
+    assert_eq!(cleared.point_count, 0);
+    assert_eq!(cleared.selection, None);
+    assert_eq!(cleared.playhead, 0.0);
+    assert_eq!(cleared.length, 0.0);
+
+    rig.chord(B);
+    rig.walk(20);
+    rig.chord(B);
+    rig.walk(20);
+    rig.chord(B);
+    rig.controller.on_key(CTRL, false);
+    rig.click(UiAction::SelectPoint(2));
+    assert_eq!(rig.controller.ui_snapshot().selection, Some(2));
+
+    rig.frame_with(|status| status.dimension = 1);
+
+    let moved = rig.controller.ui_snapshot();
+    assert_eq!(moved.point_count, 0);
+    assert_eq!(moved.selection, None);
+    assert_eq!(moved.playhead, 0.0);
+    assert!(moved.point_distances.iter().all(|distance| *distance == 0.0));
+}
+
+#[test]
+fn snapshot_carries_point_distances_and_speed() {
+    let mut rig = Rig::new();
+    rig.three_points();
+
+    let snapshot = rig.controller.ui_snapshot();
+
+    assert_eq!(snapshot.point_count, 3);
+    for index in 0..3 {
+        assert_eq!(snapshot.point_distances[index], rig.point_distance(index));
+    }
+    assert_eq!(snapshot.point_distances[3], 0.0);
+    assert_eq!(snapshot.length, rig.controller.path().curve().length());
+    assert_eq!(snapshot.speed, 6.0);
+}
+
+#[test]
+fn bar_actions_need_bar_mode() {
+    let mut rig = Rig::new();
+    let points = rig.three_points();
+    let here = rig.walk(5);
+
+    for action in [UiAction::SelectPoint(1), UiAction::Rewind, UiAction::Scrub(1.0), UiAction::AddPoint, UiAction::Play]
+    {
+        assert_eq!(Rig::pose(&rig.click(action)), here);
+    }
+
+    assert_eq!(rig.controller.state(), FreecamState::On);
+    assert_eq!(rig.controller.path().points(), &points);
+    assert_eq!(rig.controller.ui_snapshot().selection, None);
+}
+
+#[test]
+fn ctrl_enter_does_nothing() {
+    let mut rig = Rig::new();
+    rig.build_path(20);
+    let here = Rig::pose(&rig.frame());
+
+    rig.chord(ENTER);
+    let outs = rig.frames(5);
+
+    assert_eq!(rig.controller.state(), FreecamState::On);
+    for out in outs {
+        assert_eq!(Rig::pose(&out), here);
+    }
+}
+
+#[test]
+fn selecting_a_point_turns_only_its_box_green() {
+    let mut rig = marker_rig();
+    let first = rig.controller.path().points()[0].position;
+    let last = rig.controller.path().points()[1].position;
+    let green_at = |rig: &Rig, apex: Vec3| {
+        rig.world.values().any(|shape| {
+            shape.kind == MarkerKind::Line && shape.color == 0xFF4B_E35A && (shape.location - apex).length() < 1e-3
+        })
+    };
+    rig.bar_on();
+    rig.frames(3);
+    let before = rig.batch_sizes.len();
+
+    rig.click(UiAction::SelectPoint(0));
+    rig.frames(3);
+
+    assert!(green_at(&rig, first));
+    assert!(!green_at(&rig, last));
+    let sent: usize = rig.batch_sizes[before..].iter().sum();
+    let box_lines = 8 * MarkerConfig::default().line_weight as usize;
+    assert!(sent > 0 && sent <= 2 * box_lines, "{sent} entries sent for a selection change");
+
+    rig.click(UiAction::SelectPoint(0));
+    rig.frames(3);
+
+    assert!(!green_at(&rig, first));
+    assert!(green_at(&rig, last));
+}
+
+#[test]
+fn play_from_mid_path_eases_in() {
+    let mut rig = Rig::new();
+    rig.three_points();
+    rig.bar_on();
+    rig.click(UiAction::SelectPoint(1));
+    let cruise = 6.0 * FRAME_STEP as f32;
+
+    let mut previous = Rig::pose(&rig.play());
+    let mut steps = Vec::new();
+    for _ in 0..400 {
+        if rig.controller.state() != FreecamState::Playing || steps.len() >= 6 {
+            break;
+        }
+        let pose = Rig::pose(&rig.frame());
+        let step = Rig::gap(previous, pose);
+        if step > 0.0 {
+            steps.push(step);
+        }
+        previous = pose;
+    }
+
+    assert_eq!(steps.len(), 6);
+    assert!(steps[0] < 0.1 * cruise, "first moving step {} at cruise {cruise}", steps[0]);
+    assert!(steps.windows(2).all(|pair| pair[1] > pair[0]), "steps {steps:?}");
+    assert!(steps.iter().all(|step| *step < cruise), "steps {steps:?}");
+}
+
+#[test]
+fn path_change_rebuild_time_reaches_telemetry() {
+    let mut rig = Rig::with_config(FreecamConfig { telemetry: true, ..Rig::config(false) });
+    rig.build_path(4);
+    rig.frames(40);
+    let changed = rig.controller.last_telemetry_report().expect("first window");
+    rig.frames(40);
+    let quiet = rig.controller.last_telemetry_report().expect("second window");
+
+    assert!(changed.path_rebuild_us_max > 0.0, "{changed:?}");
+    assert_eq!(quiet.path_rebuild_us_max, 0.0);
 }

@@ -17,6 +17,10 @@ public:
     // null before create and after destroy
     static const FcHandle* handle();
 
+    // the same handle for the exports that take a mutable one (fc_ray_result, fc_markers_shutdown); null before
+    // create and after destroy
+    static FcHandle* mutableHandle();
+
 private:
     static std::string utf8(const std::filesystem::path& path);
 };

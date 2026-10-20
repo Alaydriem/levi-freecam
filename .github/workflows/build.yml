@@ -1,0 +1,77 @@
+name: Build
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+env:
+  MISE_TRUSTED_CONFIG_PATHS: ${{ github.workspace }}
+
+jobs:
+  rust:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: jdx/mise-action@v2
+
+      - uses: taiki-e/install-action@nextest
+
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: |
+            cargo-
+
+      - run: mise run check
+      - run: mise run test
+      - run: mise run header-check
+
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      mod: ${{ steps.filter.outputs.mod }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            mod:
+              - 'shim/**'
+              - 'freecam/ffi/**'
+
+  mod:
+    needs: [rust, changes]
+    if: needs.changes.outputs.mod == 'true'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: jdx/mise-action@v2
+
+      - name: Setup LLVM
+        uses: ZhongRuoyu/setup-llvm@v0
+        with:
+          llvm-version: 22
+
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/AppData/Local/.xmake
+          key: xmake-${{ hashFiles('shim/xmake.lua') }}
+          restore-keys: |
+            xmake-
+
+      - run: mise run build-mod
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: alaydriem-freecam-${{ github.sha }}-client-windows-x64
+          path: shim/bin/alaydriem-freecam/

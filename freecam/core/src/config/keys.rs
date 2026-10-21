@@ -1,56 +1,54 @@
-use log::warn;
 use serde::{Deserialize, Serialize};
 
-const VK_TAB: u32 = 0x09;
-const DEFAULT_CURSOR_KEY: u32 = 0x45;
+const TAB: &str = "Tab";
+const DEFAULT_TOGGLE_BAR: &str = "Ctrl+E";
 
-// Windows virtual-key codes
+// the keybind chords as config.hcl stores them; the mod manager matches them and sends the actions
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
+#[serde(default)]
 pub struct KeyConfig {
-    pub toggle: u32,
-    pub smooth_toggle: u32,
-    pub add_point: u32,
-    // both the chord key and the fast key
-    pub modifier: u32,
-    // chord key that shows or hides the mouse cursor
-    pub cursor: u32,
-    // pressed on its own, without the modifier
-    pub delete: u32,
-    pub forward: u32,
-    pub back: u32,
-    pub left: u32,
-    pub right: u32,
-    pub up: u32,
-    pub down: u32,
+    pub toggle: String,
+    pub toggle_smooth: String,
+    pub add_point: String,
+    pub toggle_bar: String,
+    pub delete_point: String,
+    pub fly_forward: String,
+    pub fly_back: String,
+    pub fly_left: String,
+    pub fly_right: String,
+    pub fly_up: String,
+    pub fly_down: String,
+    pub fly_fast: String,
 }
 
 impl Default for KeyConfig {
     fn default() -> Self {
         Self {
-            toggle: 0x50,
-            smooth_toggle: 0xDB,
-            add_point: 0x42,
-            modifier: 0x11,
-            cursor: DEFAULT_CURSOR_KEY,
-            delete: 0x2E,
-            forward: 0x57,
-            back: 0x53,
-            left: 0x41,
-            right: 0x44,
-            up: 0x20,
-            down: 0x10,
+            toggle: "Ctrl+P".to_owned(),
+            toggle_smooth: "Ctrl+LeftBracket".to_owned(),
+            add_point: "Ctrl+B".to_owned(),
+            toggle_bar: DEFAULT_TOGGLE_BAR.to_owned(),
+            delete_point: "Delete".to_owned(),
+            fly_forward: "W".to_owned(),
+            fly_back: "S".to_owned(),
+            fly_left: "A".to_owned(),
+            fly_right: "D".to_owned(),
+            fly_up: "Space".to_owned(),
+            fly_down: "Shift".to_owned(),
+            fly_fast: "Ctrl".to_owned(),
         }
     }
 }
 
 impl KeyConfig {
-    // returns a copy with every key moved to a usable code
+    // returns a copy with every chord moved to a usable one
     pub fn sanitized(self) -> Self {
-        if self.cursor != VK_TAB {
+        if !self.toggle_bar.eq_ignore_ascii_case(TAB) {
             return self;
         }
-        warn!("keys.cursor is Tab, which the game uses; using 0x{DEFAULT_CURSOR_KEY:02X}");
-        Self { cursor: DEFAULT_CURSOR_KEY, ..self }
+        curia::warn!("keys.toggle_bar is Tab, which the game uses; using the default chord", {
+            chord: DEFAULT_TOGGLE_BAR
+        });
+        Self { toggle_bar: DEFAULT_TOGGLE_BAR.to_owned(), ..self }
     }
 }

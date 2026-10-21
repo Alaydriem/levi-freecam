@@ -7,15 +7,28 @@ on:
     branches: [master]
 
 env:
-  MISE_TRUSTED_CONFIG_PATHS: ${{ github.workspace }}
+  MISE_TRUSTED_CONFIG_PATHS: ${{ github.workspace }}/levi-freecam
 
 jobs:
   rust:
     runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: levi-freecam
     steps:
+      # the path dependencies name ../levi-crates, so both repos sit side by side under the workspace
       - uses: actions/checkout@v7
+        with:
+          path: levi-freecam
+
+      - uses: actions/checkout@v7
+        with:
+          repository: alaydriem/levi-crates
+          path: levi-crates
 
       - uses: jdx/mise-action@v2
+        with:
+          working_directory: levi-freecam
 
       - uses: taiki-e/install-action@nextest
 
@@ -24,8 +37,8 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
-          key: cargo-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+            levi-freecam/target
+          key: cargo-${{ hashFiles('levi-freecam/Cargo.lock', 'levi-freecam/rust-toolchain.toml', 'levi-crates/Cargo.lock') }}
           restore-keys: |
             cargo-
 
@@ -55,10 +68,23 @@ jobs:
     needs: [rust, changes]
     if: needs.changes.outputs.mod == 'true'
     runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: levi-freecam
     steps:
+      # the path dependencies name ../levi-crates, so both repos sit side by side under the workspace
       - uses: actions/checkout@v7
+        with:
+          path: levi-freecam
+
+      - uses: actions/checkout@v7
+        with:
+          repository: alaydriem/levi-crates
+          path: levi-crates
 
       - uses: jdx/mise-action@v2
+        with:
+          working_directory: levi-freecam
 
       - name: Setup LLVM
         uses: ZhongRuoyu/setup-llvm@v0
@@ -69,7 +95,7 @@ jobs:
         with:
           path: |
             ~/AppData/Local/.xmake
-          key: xmake-${{ hashFiles('shim/xmake.lua') }}
+          key: xmake-${{ hashFiles('levi-freecam/shim/xmake.lua') }}
           restore-keys: |
             xmake-
 
@@ -82,4 +108,4 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: alaydriem-freecam-${{ github.sha }}-client-windows-x64
-          path: shim/bin/alaydriem-freecam/
+          path: levi-freecam/shim/bin/alaydriem-freecam/

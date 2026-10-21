@@ -1,6 +1,6 @@
 use egui::Color32;
 
-use crate::theme::Palette;
+use studio_ui::theme::StudioPalette;
 
 /// Visual weight of a [`super::TextButton`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -16,9 +16,15 @@ impl ButtonKind {
     /// (rest fill, hover fill, press fill, text colour)
     pub fn colors(self) -> (Color32, Color32, Color32, Color32) {
         match self {
-            Self::Primary => (Palette::ACCENT, Palette::ACCENT_HOVER, Palette::ACCENT_PRESS, Palette::WHITE),
-            Self::Secondary => (Palette::BG_FIELD, Palette::BG_HOVER, Palette::BG_ACTIVE, Palette::TEXT),
-            Self::Outline => (Color32::TRANSPARENT, Palette::BG_HOVER, Palette::BG_ACTIVE, Palette::TEXT),
+            Self::Primary => {
+                (StudioPalette::ACCENT, StudioPalette::ACCENT_HOVER, StudioPalette::ACCENT_PRESS, StudioPalette::WHITE)
+            }
+            Self::Secondary => {
+                (StudioPalette::BG_FIELD, StudioPalette::BG_HOVER, StudioPalette::BG_ACTIVE, StudioPalette::TEXT)
+            }
+            Self::Outline => {
+                (Color32::TRANSPARENT, StudioPalette::BG_HOVER, StudioPalette::BG_ACTIVE, StudioPalette::TEXT)
+            }
         }
     }
 }

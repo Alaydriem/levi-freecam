@@ -1,37 +1,68 @@
+use egui::{Context, Event, PointerButton, Pos2, RawInput, Rect, vec2};
 use freecam_core::config::KeyConfig;
-use freecam_core::structs::{UiEvent, UiFrameInput, UiFrameOutput, UiLegend, UiSnapshot};
-use freecam_ui::runtime::UiRuntime;
+use freecam_core::structs::{UiAction, UiLegend, UiSnapshot};
+use freecam_ui::runtime::FreecamUi;
+use studio_ui::theme::{FontSource, StudioTheme};
 
-/// A runtime, a snapshot and a legend for tests, run on a 1920x1080 screen.
+/// A pointer event as the mod manager feeds it to egui, in points.
+#[derive(Debug, Clone, Copy)]
+pub enum UiEvent {
+    PointerMoved { x: f32, y: f32 },
+    PointerButton { x: f32, y: f32, button: u8, pressed: bool },
+}
+
+/// One vertex of the tessellated frame, in points, with its premultiplied colour.
+#[derive(Debug, Clone, Copy)]
+pub struct TestVertex {
+    pub x: f32,
+    pub y: f32,
+    pub rgba: [u8; 4],
+}
+
+/// What one frame drew and did.
+#[derive(Debug, Default)]
+pub struct FrameResult {
+    pub actions: Vec<UiAction>,
+    pub vertices: Vec<TestVertex>,
+    pub rect: Option<Rect>,
+    pub wants_pointer: bool,
+}
+
+/// The freecam views in a Studio Dark context as the mod manager makes it, run on a 1920x1080 screen.
 pub struct UiFixture {
-    pub runtime: UiRuntime,
+    pub ui: FreecamUi,
+    pub ctx: Context,
     pub snapshot: UiSnapshot,
     pub legend: UiLegend,
-    pub input: UiFrameInput,
-    pub out: UiFrameOutput,
+    pub pixels_per_point: f32,
+    pub time: f64,
+    actions: Vec<UiAction>,
+    last: FrameResult,
 }
 
 impl UiFixture {
-    pub const MAX_VERTICES: usize = 65536;
     pub const SETTLE_FRAMES: usize = 12;
     pub const DISTANCES: [f32; 3] = [0.0, 10.0, 40.0];
+    pub const SCREEN: [f32; 2] = [1920.0, 1080.0];
 
     pub fn new() -> Self {
-        Self::with_max_vertices(Self::MAX_VERTICES)
-    }
-
-    pub fn with_max_vertices(max_vertices: usize) -> Self {
+        let ctx = Context::default();
+        StudioTheme::install(&ctx, FontSource::Embedded);
         Self {
-            runtime: UiRuntime::new(max_vertices),
-            snapshot: UiSnapshot { visible: true, point_count: 3, total_seconds: 4.5, ..Default::default() },
-            legend: UiLegend::new(&KeyConfig::default()),
-            input: UiFrameInput {
-                screen_width: 1920.0,
-                screen_height: 1080.0,
-                pixels_per_point: 1.0,
-                time_seconds: 0.0,
+            ui: FreecamUi::new(),
+            ctx,
+            snapshot: UiSnapshot {
+                visible: true,
+                can_screenshot: true,
+                point_count: 3,
+                total_seconds: 4.5,
+                ..Default::default()
             },
-            out: UiFrameOutput::new(),
+            legend: UiLegend::new(&KeyConfig::default()),
+            pixels_per_point: 1.0,
+            time: 0.0,
+            actions: Vec::with_capacity(16),
+            last: FrameResult::default(),
         }
     }
 
@@ -62,6 +93,12 @@ impl UiFixture {
         self
     }
 
+    /// A new context with the theme, as the mod manager makes one after the renderer lost its textures.
+    pub fn new_context(&mut self) {
+        self.ctx = Context::default();
+        StudioTheme::install(&self.ctx, FontSource::Embedded);
+    }
+
     /// Runs enough empty frames for every hover and selection transition to finish.
     pub fn settle(&mut self) {
         for _ in 0..Self::SETTLE_FRAMES {
@@ -69,16 +106,63 @@ impl UiFixture {
         }
     }
 
-    pub fn pixels_per_point(mut self, pixels_per_point: f32) -> Self {
-        self.input.pixels_per_point = pixels_per_point;
-        self
+    /// Runs one frame a sixtieth of a second after the last and tessellates it.
+    pub fn frame(&mut self, events: &[UiEvent]) -> &FrameResult {
+        let (output, rect) = self.pass(events);
+        let primitives = self.ctx.tessellate(output.shapes, output.pixels_per_point);
+        let mut vertices = Vec::new();
+        for primitive in primitives {
+            if let egui::epaint::Primitive::Mesh(mesh) = primitive.primitive {
+                vertices.extend(mesh.vertices.iter().map(|v| TestVertex {
+                    x: v.pos.x,
+                    y: v.pos.y,
+                    rgba: v.color.to_array(),
+                }));
+            }
+        }
+        self.last = FrameResult {
+            actions: self.actions.clone(),
+            vertices,
+            rect: rect.is_positive().then_some(rect),
+            wants_pointer: self.ui.pointer_over_panel(),
+        };
+        &self.last
     }
 
-    /// Runs one frame, a sixtieth of a second after the last.
-    pub fn frame(&mut self, events: &[UiEvent]) -> &UiFrameOutput {
-        self.input.time_seconds += 1.0 / 60.0;
-        let mut events = events.iter().copied();
-        self.runtime.run(&self.input, &self.snapshot, &self.legend, &mut events, &mut self.out);
-        &self.out
+    /// Runs one frame of the views only, as the mod manager calls the frame handler, with nothing tessellated.
+    pub fn run(&mut self) {
+        let _ = self.pass(&[]);
+    }
+
+    fn pass(&mut self, events: &[UiEvent]) -> (egui::FullOutput, Rect) {
+        self.time += 1.0 / 60.0;
+        self.actions.clear();
+        let mut input = RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(Self::SCREEN[0], Self::SCREEN[1]))),
+            time: Some(self.time),
+            events: events.iter().map(|event| Self::egui_event(*event)).collect(),
+            ..Default::default()
+        };
+        input.viewports.entry(input.viewport_id).or_default().native_pixels_per_point = Some(self.pixels_per_point);
+        let mut rect = Rect::NOTHING;
+        let ui = &mut self.ui;
+        let snapshot = &self.snapshot;
+        let legend = &self.legend;
+        let actions = &mut self.actions;
+        let mut output = self.ctx.run_pass(input, |ctx| rect = ui.show(ctx, snapshot, legend, actions));
+        output.textures_delta.clear();
+        (output, rect)
+    }
+
+    fn egui_event(event: UiEvent) -> Event {
+        match event {
+            UiEvent::PointerMoved { x, y } => Event::PointerMoved(Pos2::new(x, y)),
+            UiEvent::PointerButton { x, y, button, pressed } => Event::PointerButton {
+                pos: Pos2::new(x, y),
+                button: if button == 1 { PointerButton::Secondary } else { PointerButton::Primary },
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            },
+        }
     }
 }

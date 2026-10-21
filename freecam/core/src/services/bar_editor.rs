@@ -1,5 +1,3 @@
-use log::info;
-
 use crate::config::LookAtConfig;
 use crate::services::{BarState, CameraMotion, PathSession, SmoothnessTelemetry};
 use crate::structs::{CameraPose, KeyEdit, PathKey, RayRequest, UiAction, Vec3};
@@ -36,6 +34,12 @@ impl BarEditor {
             pending_frames: None,
             clear_arm_left: 0.0,
         }
+    }
+
+    // a new look-at config; a key already waiting for its ray keeps the old one
+    pub fn set_look_at(&mut self, look_at: LookAtConfig) {
+        self.look_at_enabled = look_at.enabled;
+        self.look_at_distance = look_at.max_distance;
     }
 
     pub fn selection(&self) -> Option<usize> {
@@ -151,7 +155,7 @@ impl BarEditor {
             self.pending_frames = None;
             path.clear_points();
             self.clamp(path);
-            info!("freecam path cleared by the user");
+            curia::info!("freecam path cleared by the user");
         } else {
             self.clear_arm_left = CLEAR_ARM_SECONDS;
         }

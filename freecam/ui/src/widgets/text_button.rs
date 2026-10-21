@@ -1,7 +1,8 @@
 use egui::{Align2, AsIdSalt, Color32, CursorIcon, IdSalt, Rect, Response, Sense, Ui, pos2, vec2};
 
-use super::{ButtonKind, ButtonState, Draw, Motion};
-use crate::theme::{Metrics, Palette, Typeface};
+use super::{BarDraw, ButtonKind, ButtonState};
+use studio_ui::theme::{Metrics, StudioPalette, Typeface};
+use studio_ui::widgets::{Draw, Motion};
 
 /// A labelled button with an optional leading icon, a weight from [`ButtonKind`] and a hover and press transition.
 pub struct TextButton {
@@ -53,20 +54,24 @@ impl TextButton {
         let (rest, hovered, pressed, text_color) = self.kind.colors();
         let radius = Metrics::RADIUS_CONTROL;
         if self.kind == ButtonKind::Primary {
-            Draw::shadow(painter, rect, radius, 6.0, vec2(0.0, 2.0), Palette::alpha(rest, 0.25 + 0.15 * hover));
+            Draw::shadow(painter, rect, radius, 6.0, vec2(0.0, 2.0), StudioPalette::alpha(rest, 0.25 + 0.15 * hover));
         }
-        Draw::fill(painter, rect, radius, Palette::mix(Palette::mix(rest, hovered, hover), pressed, press));
+        Draw::fill(painter, rect, radius, StudioPalette::mix(StudioPalette::mix(rest, hovered, hover), pressed, press));
         match (self.state, self.kind) {
-            (ButtonState::Armed, _) => Draw::outline(painter, rect, radius, 1.5, Palette::ACCENT_HOVER),
-            (_, ButtonKind::Outline) => {
-                Draw::outline(painter, rect, radius, 1.0, Palette::mix(Palette::LINE_STRONG, Palette::BG_ACTIVE, hover))
-            }
+            (ButtonState::Armed, _) => Draw::outline(painter, rect, radius, 1.5, StudioPalette::ACCENT_HOVER),
+            (_, ButtonKind::Outline) => Draw::outline(
+                painter,
+                rect,
+                radius,
+                1.0,
+                StudioPalette::mix(StudioPalette::LINE_STRONG, StudioPalette::BG_ACTIVE, hover),
+            ),
             (_, ButtonKind::Primary) => Draw::outline(painter, rect, radius, 1.0, Color32::from_white_alpha(18)),
             _ => {}
         }
 
-        let color = if disabled { Palette::TEXT_DIM } else { text_color };
-        let galley = Draw::galley(painter, self.label, Typeface::semibold(Self::FONT_SIZE), color);
+        let color = if disabled { StudioPalette::TEXT_DIM } else { text_color };
+        let galley = BarDraw::galley(painter, self.label, Typeface::semibold(Self::FONT_SIZE), color);
         let lead = if self.icon.is_some() { Self::ICON_SIZE + Self::ICON_GAP } else { 0.0 };
         let left = rect.center().x - (galley.size().x + lead) * 0.5;
         let cy = rect.center().y;

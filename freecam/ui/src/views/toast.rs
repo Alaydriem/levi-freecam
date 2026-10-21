@@ -4,8 +4,10 @@ use egui::{Align2, Rect, Ui, pos2, vec2};
 use freecam_core::structs::{ToastKind, UiSnapshot};
 
 use super::{BarLayout, BarText};
-use crate::theme::Palette;
-use crate::widgets::Draw;
+use crate::theme::FreecamPalette;
+use crate::widgets::BarDraw;
+use studio_ui::theme::StudioPalette;
+use studio_ui::widgets::Draw;
 
 /// The screenshot message above the bar.
 pub struct Toast;
@@ -54,10 +56,11 @@ impl Toast {
             vec2(width, Self::HEIGHT),
         );
         Draw::chip_bg(painter, rect);
-        let dot_color = if snapshot.toast == ToastKind::Saved { Palette::POINT_SELECTED } else { Palette::PLAYHEAD };
+        let dot_color =
+            if snapshot.toast == ToastKind::Saved { FreecamPalette::POINT_SELECTED } else { FreecamPalette::PLAYHEAD };
         let dot = pos2(rect.left() + 20.0, rect.center().y);
         painter.circle_filled(dot, 4.0, dot_color);
-        Draw::place_tinted(painter, galley, pos2(dot.x + 14.0, dot.y), Align2::LEFT_CENTER, Palette::TEXT);
+        BarDraw::place_tinted(painter, galley, pos2(dot.x + 14.0, dot.y), Align2::LEFT_CENTER, StudioPalette::TEXT);
         rect
     }
 }

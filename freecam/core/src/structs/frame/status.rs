@@ -13,7 +13,6 @@ pub struct FrameStatus {
     pub player_camera_active: bool,
     // the player's head position and rotation
     pub start_pose: CameraPose,
-    pub gui_hidden: bool,
     pub health: i32,
     pub dimension: i32,
     pub rendered_position: Option<Vec3>,
@@ -29,4 +28,6 @@ pub struct FrameStatus {
     pub handler_generation: u32,
     // count of presented frames, raised by one on each Present; the shim may call fc_frame more than once per present
     pub present_count: u32,
+    // another mod holds the Camera lease, so the player camera is that mod's to give back; read while exiting
+    pub camera_held_by_other: bool,
 }

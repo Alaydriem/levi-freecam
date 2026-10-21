@@ -1,13 +1,5 @@
-mod font_loader;
-mod icon;
-mod metrics;
-mod palette;
-mod studio_theme;
-mod typeface;
+mod freecam_icon;
+mod freecam_palette;
 
-pub use font_loader::FontLoader;
-pub use icon::Icon;
-pub use metrics::Metrics;
-pub use palette::Palette;
-pub use studio_theme::StudioTheme;
-pub use typeface::Typeface;
+pub use freecam_icon::FreecamIcon;
+pub use freecam_palette::FreecamPalette;

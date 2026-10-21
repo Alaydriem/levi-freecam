@@ -5,7 +5,7 @@ use egui::{Color32, FontId, Galley, Painter};
 
 /// One line of text that is laid out again only when its words or the font generation change. Each frame writes
 /// the text into a kept buffer and compares it with the text on show, so a frame whose text did not change
-/// allocates nothing. The galley has a placeholder colour; [`super::Draw::place_tinted`] paints it in any colour.
+/// allocates nothing. The galley has a placeholder colour; [`super::BarDraw::place_tinted`] paints it in any colour.
 pub struct CachedText {
     font: FontId,
     // the text written this frame

@@ -1,11 +1,10 @@
-use log::warn;
 use serde::{Deserialize, Serialize};
 
 const MIN_MAX_DISTANCE: f32 = 8.0;
 const MAX_MAX_DISTANCE: f32 = 512.0;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
+#[serde(default)]
 pub struct LookAtConfig {
     // the add-point key takes a look-at key when the crosshair ray hits
     pub enabled: bool,
@@ -26,7 +25,7 @@ impl LookAtConfig {
         let sanitized =
             Self { enabled: self.enabled, max_distance: distance.clamp(MIN_MAX_DISTANCE, MAX_MAX_DISTANCE) };
         if sanitized != self {
-            warn!("config lookAt values out of range were clamped: {sanitized:?}");
+            curia::warn!("config look_at values out of range were clamped", { values: format!("{sanitized:?}") });
         }
         sanitized
     }

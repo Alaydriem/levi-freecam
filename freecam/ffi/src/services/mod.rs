@@ -1,15 +1,21 @@
 pub mod boundary;
+pub mod descriptor;
+pub mod freecam_frame_handler;
 pub mod handle;
 pub mod handle_state;
-pub mod log_bridge;
-pub mod ui_event_queue;
+pub mod link_session;
+pub mod render_clock;
+pub mod screenshot_path;
+pub mod screenshot_relay;
 pub mod ui_handoff;
-pub mod ui_state;
 
 pub use boundary::FcBoundary;
+pub use descriptor::FreecamDescriptor;
+pub use freecam_frame_handler::FreecamFrameHandler;
 pub use handle::FcHandle;
 pub use handle_state::HandleState;
-pub use log_bridge::LogBridge;
-pub use ui_event_queue::UiEventQueue;
+pub use link_session::LinkSession;
+pub use render_clock::RenderClock;
+pub use screenshot_path::ScreenshotPath;
+pub use screenshot_relay::ScreenshotRelay;
 pub use ui_handoff::UiHandoff;
-pub use ui_state::UiState;

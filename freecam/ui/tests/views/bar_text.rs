@@ -1,9 +1,7 @@
-use freecam_core::structs::UiFrameOutput;
-
-use crate::support::ui_fixture::UiFixture;
+use crate::support::ui_fixture::{FrameResult, UiFixture};
 
 // the position and colour of every vertex; the atlas places glyphs by history, so texture coordinates are left out
-fn picture(out: &UiFrameOutput) -> Vec<(f32, f32, [u8; 4])> {
+fn picture(out: &FrameResult) -> Vec<(f32, f32, [u8; 4])> {
     out.vertices.iter().map(|v| (v.x, v.y, v.rgba)).collect()
 }
 
@@ -41,9 +39,11 @@ fn changed_read_outs_match_a_fresh_layout() {
 #[test]
 fn scale_change_lays_the_text_out_again() {
     let mut kept = settled(UiFixture::new().with_path());
-    kept.input.pixels_per_point = 1.5;
+    kept.pixels_per_point = 1.5;
     kept.settle();
-    let mut fresh = settled(UiFixture::new().with_path().pixels_per_point(1.5));
+    let mut fresh = UiFixture::new().with_path();
+    fresh.pixels_per_point = 1.5;
+    let mut fresh = settled(fresh);
 
     assert_eq!(picture(kept.frame(&[])), picture(fresh.frame(&[])));
 }
@@ -52,13 +52,13 @@ fn scale_change_lays_the_text_out_again() {
 fn new_context_lays_the_text_out_again() {
     // the first frame in a new context fills a new atlas; a galley kept from the old one would point at other glyphs
     let mut kept = settled(UiFixture::new().with_path());
-    kept.runtime.reset_textures();
+    kept.new_context();
+    kept.ui.textures_lost();
     let mut fresh = UiFixture::new().with_path();
-    fresh.input.time_seconds = kept.input.time_seconds;
+    fresh.time = kept.time;
 
-    let kept_out = kept.frame(&[]).clone();
-    let fresh_out = fresh.frame(&[]);
+    let kept_out = picture(kept.frame(&[]));
+    let fresh_out = picture(fresh.frame(&[]));
 
-    assert_eq!(kept_out.vertices, fresh_out.vertices);
-    assert_eq!(kept_out.texture_bytes, fresh_out.texture_bytes);
+    assert_eq!(kept_out, fresh_out);
 }

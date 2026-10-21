@@ -11,16 +11,11 @@ pub mod ui;
 
 pub use camera::CameraPose;
 pub use collections::BoundedQueue;
-pub use frame::{
-    CameraCommand, CaptureRequest, FrameOutput, FrameStatus, GuiCommand, MouseCommand, RayRequest, ScreenshotStep,
-};
-pub use input::{HeldKeys, InputAction, KeyOutcome};
+pub use frame::{CameraCommand, CaptureRequest, FrameOutput, FrameStatus, RayRequest, ScreenshotStep};
+pub use input::{FreecamAction, HeldKeys};
 pub use markers::{MarkerEntry, MarkerKind, MarkerShape};
 pub use math::Vec3;
 pub use path::{KeyEdit, PathKey};
-pub use session::{FreecamState, ServerInstruction, StartRefusal};
+pub use session::{FreecamState, ServerInstruction, StartLeases, StartRefusal};
 pub use telemetry::TelemetryReport;
-pub use ui::{
-    LegendRow, ToastKind, UiAction, UiCursor, UiDraw, UiEvent, UiFrameInput, UiFrameOutput, UiLegend, UiSnapshot,
-    UiTextureDelta, UiTiming, UiTimingSummary, UiVertex,
-};
+pub use ui::{LegendRow, ToastKind, UiAction, UiLegend, UiSnapshot, UiTiming, UiTimingSummary};

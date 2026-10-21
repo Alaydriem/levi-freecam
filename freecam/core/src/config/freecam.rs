@@ -1,19 +1,17 @@
 use serde::{Deserialize, Serialize};
 
-use crate::config::{KeyConfig, LookAtConfig, MarkerConfig, MotionConfig, ScreenshotConfig, UiConfig};
+use crate::config::{KeyConfig, LookAtConfig, MarkerConfig, MotionConfig, ScreenshotConfig};
 
 // the game's camera system updates on every other frame, so 4 frames give at least one update with no Set
 const MIN_EXIT_WAIT_FRAMES: u32 = 4;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
+#[serde(default)]
 pub struct FreecamConfig {
     pub keys: KeyConfig,
     pub motion: MotionConfig,
-    pub ui: UiConfig,
     pub markers: MarkerConfig,
     pub screenshot: ScreenshotConfig,
-    #[serde(rename = "lookAt")]
     pub look_at: LookAtConfig,
     pub exit_wait_frames: u32,
     pub telemetry: bool,
@@ -24,7 +22,6 @@ impl Default for FreecamConfig {
         Self {
             keys: KeyConfig::default(),
             motion: MotionConfig::default(),
-            ui: UiConfig::default(),
             markers: MarkerConfig::default(),
             screenshot: ScreenshotConfig::default(),
             look_at: LookAtConfig::default(),
@@ -40,7 +37,6 @@ impl FreecamConfig {
         Self {
             keys: self.keys.sanitized(),
             motion: self.motion.sanitized(),
-            ui: self.ui.sanitized(),
             markers: self.markers.sanitized(),
             screenshot: self.screenshot.sanitized(),
             look_at: self.look_at.sanitized(),

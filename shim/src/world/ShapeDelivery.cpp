@@ -1,4 +1,5 @@
 #include "world/ShapeDelivery.h"
+#include "bridge/ModLog.h"
 
 #include "mod/FreecamMod.h"
 #include "network/ClientPacketHandler.h"
@@ -51,7 +52,7 @@ PrimitiveShapesPacket* reusablePacket() {
         g_packet = std::static_pointer_cast<PrimitiveShapesPacket>(
             MinecraftPackets::createPacket(MinecraftPacketIds::PrimitiveShapesPacket)
         );
-        if (!g_packet) FreecamMod::getInstance().getSelf().getLogger().warn("could not create a primitive shapes packet");
+        if (!g_packet) ModLog::warn("could not create a primitive shapes packet");
     }
     return g_packet.get();
 }
@@ -62,7 +63,7 @@ bool onHandlerThread() {
     uint32_t current       = static_cast<uint32_t>(GetCurrentThreadId());
     if (handlerThread == current) return true;
     if (!g_threadMismatchLogged.exchange(true)) {
-        FreecamMod::getInstance().getSelf().getLogger().warn(
+        ModLog::warn(
             "markers: thread {} differs from the packet handler thread {}; no shape is sent",
             current,
             handlerThread

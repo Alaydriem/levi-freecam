@@ -1,8 +1,8 @@
 use egui::{Pos2, Rect, pos2, vec2};
-use freecam_core::structs::{ToastKind, UiAction, UiEvent, UiFrameOutput, UiSnapshot};
+use freecam_core::structs::{ToastKind, UiAction, UiSnapshot};
 use freecam_ui::views::{BarLayout, Scrubber, Toast};
 
-use crate::support::ui_fixture::UiFixture;
+use crate::support::ui_fixture::{FrameResult, UiEvent, UiFixture};
 
 const POINT: [u8; 4] = [0x3D, 0xA5, 0xFF, 0xFF];
 const POINT_SELECTED: [u8; 4] = [0x4B, 0xE3, 0x5A, 0xFF];
@@ -39,7 +39,7 @@ fn click(fixture: &mut UiFixture, at: Pos2) -> Vec<UiAction> {
 }
 
 // indexes of the vertices of `color` within `radius` points of `at`
-fn vertices_near(out: &UiFrameOutput, color: [u8; 4], at: Pos2, radius: f32) -> Vec<usize> {
+fn vertices_near(out: &FrameResult, color: [u8; 4], at: Pos2, radius: f32) -> Vec<usize> {
     let near = |x: f32, y: f32| (x - at.x).abs() <= radius && (y - at.y).abs() <= radius;
     out.vertices.iter().enumerate().filter(|(_, v)| v.rgba == color && near(v.x, v.y)).map(|(i, _)| i).collect()
 }
@@ -242,7 +242,7 @@ fn toast_draws_file_name() {
     assert_eq!(Toast::message(&broken).as_deref(), Some("Screenshot saved: "));
     assert_eq!(Toast::message(&UiSnapshot::default()), None);
 
-    let toast_band = |out: &UiFrameOutput| {
+    let toast_band = |out: &FrameResult| {
         let top = layout().bar.top();
         out.vertices.iter().filter(|v| v.y > top - 50.0 && v.y < top - 10.0).count()
     };

@@ -1,7 +1,8 @@
 use crate::structs::{CaptureRequest, ScreenshotStep};
 
-// presented frames a capture request may wait for its frame to be taken, counted from the request
-pub const CAPTURE_TIMEOUT_FRAMES: u32 = 10;
+// presented frames a capture request may wait for its frame to be taken, counted from the request; the mod manager
+// gives up on a copy after 30 frames and answers then, so freecam waits longer than that
+pub const CAPTURE_TIMEOUT_FRAMES: u32 = 40;
 // new presents after the markers left before the capture is asked for; fc_frame and Present run pipelined, so
 // the present in flight when the last removes went out can still hold the markers
 pub const SETTLE_PRESENTS: u32 = 2;
@@ -75,7 +76,7 @@ impl ScreenshotSequence {
     }
 
     // runs once per fc_frame; `live_slots` is the marker count still in the world, `present_count` the
-    // shim's count of presented frames and `dt` the frame time in seconds. The markers may settle on any call;
+    // count of frames the mod manager drew and `dt` the frame time in seconds. The markers may settle on any call;
     // every other change waits for a new present, so the capture is asked for `SETTLE_PRESENTS` presented
     // frames after the markers left
     pub fn step(&mut self, live_slots: usize, present_count: u32, dt: f64) -> ScreenshotStep {

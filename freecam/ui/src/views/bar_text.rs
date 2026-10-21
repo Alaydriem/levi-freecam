@@ -2,8 +2,8 @@ use egui::Context;
 use freecam_core::structs::UiSnapshot;
 
 use super::PointLabels;
-use crate::theme::Typeface;
 use crate::widgets::{CachedText, FontWatch};
+use studio_ui::theme::Typeface;
 
 /// The bar's and the toast's changing text, kept between frames. A read-out is laid out again only when its value
 /// or the fonts change, so a frame with the same values allocates no text.

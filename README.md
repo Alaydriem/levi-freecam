@@ -47,7 +47,7 @@ Alaydriem's Freecam lets the camera leave your player and fly anywhere. Your pla
 
 ## 📦 Installation
 
-You need [LeviLamina](https://github.com/LiteLDev/LeviLamina) for the **client**, on a supported game version (see [Compatibility](#-compatibility)).
+You need [LeviLamina](https://github.com/LiteLDev/LeviLamina) for the **client**, on a supported game version (see [Compatibility](#-compatibility)), and [Alaydriem's Mod Manager](https://github.com/alaydriem/levi-crates) `0.1.x`. Freecam gets its keys, mouse, drawing, settings and log from the mod manager. Without it, freecam stays off and writes one line to the LeviLamina log.
 
 Install with [lip](https://github.com/LiteLDev/lip). Run this command in your game folder:
 
@@ -76,9 +76,9 @@ The folder name must stay `alaydriem-freecam`. LeviLamina does not load the mod 
 
 ## ✅ Compatibility
 
-| Mod version | Minecraft Bedrock (Windows) | LeviLamina |
-| --- | --- | --- |
-| 0.1.0 | 1.26.51 | 26.51.6 or later 26.51.x |
+| Mod version | Minecraft Bedrock (Windows) | LeviLamina | Alaydriem Mod Manager |
+| --- | --- | --- | --- |
+| 0.1.0 | 1.26.51 | 26.51.6 or later 26.51.x | 0.1.x |
 
 The mod hooks into the game directly. A new game version needs a new mod release.
 
@@ -121,53 +121,51 @@ When a path plays, the bar and the markers hide. Playback stops at the end of th
 | Delete | Delete the selected point (shown when a point is selected) |
 | Add point | Add a point after the last point at or before the playhead |
 | Clear points (✕) | Delete all points. Click two times within 3 seconds |
-| Screenshot | Save a PNG to `%USERPROFILE%\Pictures\Screenshots` (the folder is a setting). A message on the bar says if it was saved or failed |
+| Screenshot | Save a PNG to `%USERPROFILE%\Pictures\Screenshots` (set the folder in `config.hcl`). The mod manager takes the picture, without the bar or any other mod's drawing. A message on the bar says if it was saved or failed |
 
 > [!TIP]
-> Every key is a setting in `config.json`, written as a [Windows virtual-key code](https://learn.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes). <kbd>Ctrl</kbd> is the `modifier` key for every combination, and it is also the fast key. <kbd>Del</kbd> is pressed on its own.
+> Every key is a keybind in the mod manager panel, on its Keybinds page, where you can change it. Only <kbd>Ctrl</kbd> + <kbd>P</kbd> works while freecam is off; the other keys reach the game until freecam is on.
 
 ---
 
 ## ⚙️ Configuration
 
-The config file is `mods/alaydriem-freecam/config/config.json`. A key that you remove from the file uses its default. A value out of range is changed to the nearest allowed value. If the file cannot be read, the mod uses the defaults.
+Change the settings in the mod manager panel. A change saves by itself, and most changes apply at once; the panel marks the ones that need a game restart. The panel keeps them in `config.hcl` in the mod's config folder. A value out of range is changed to the nearest allowed value. If the file cannot be read, the mod uses the defaults. An old `config.json` is not read.
 
 <details>
 <summary><b>Full reference</b></summary>
 
-Speeds are in blocks per second. Keys are Windows virtual-key codes.
+Speeds are in blocks per second. Keys are chords such as `"Ctrl+P"`, `"Delete"` or `"W"`.
 
 | Section | Setting | Default | What it does |
 | --- | --- | --- | --- |
-| `keys` | `toggle` | `0x50` (<kbd>P</kbd>) | With the modifier: freecam on / off |
-| | `smoothToggle` | `0xDB` (<kbd>[</kbd>) | With the modifier: smooth motion on / off |
-| | `addPoint` | `0x42` (<kbd>B</kbd>) | With the modifier: add a path point |
-| | `cursor` | `0x45` (<kbd>E</kbd>) | With the modifier: show or hide the bar. <kbd>Tab</kbd> is not allowed (the game uses it) |
-| | `delete` | `0x2E` (<kbd>Del</kbd>) | Delete the selected point (no modifier) |
-| | `modifier` | `0x11` (<kbd>Ctrl</kbd>) | The combination key, and the fast key |
-| | `forward` / `back` / `left` / `right` | `0x57` / `0x53` / `0x41` / `0x44` | Move (<kbd>W</kbd> <kbd>S</kbd> <kbd>A</kbd> <kbd>D</kbd>) |
-| | `up` / `down` | `0x20` / `0x10` | Move up / down (<kbd>Space</kbd> / <kbd>Shift</kbd>) |
-| `motion` | `startSpeed` | `6.0` | Speed when freecam turns on |
-| | `minSpeed` / `maxSpeed` | `0.5` / `80.0` | Speed limits for the mouse wheel. `minSpeed` cannot go below `0.5` |
-| | `scrollFactor` | `1.25` | Speed change for each wheel step |
-| | `fastMultiplier` | `3.0` | Speed multiplier while the fast key is held |
+| `keys` | `toggle` | `"Ctrl+P"` | Freecam on / off |
+| | `toggle_smooth` | `"Ctrl+LeftBracket"` | Smooth motion on / off |
+| | `add_point` | `"Ctrl+B"` | Add a path point |
+| | `toggle_bar` | `"Ctrl+E"` | Show or hide the bar. <kbd>Tab</kbd> is not allowed (the game uses it) |
+| | `delete_point` | `"Delete"` | Delete the selected point |
+| | `fly_forward` / `fly_back` / `fly_left` / `fly_right` | `"W"` / `"S"` / `"A"` / `"D"` | Move |
+| | `fly_up` / `fly_down` | `"Space"` / `"Shift"` | Move up / down |
+| | `fly_fast` | `"Ctrl"` | Move 3 times faster while held |
+| `motion` | `start_speed` | `6.0` | Speed when freecam turns on |
+| | `min_speed` / `max_speed` | `0.5` / `80.0` | Speed limits for the mouse wheel. `min_speed` cannot go below `0.5` |
+| | `scroll_factor` | `1.25` | Speed change for each wheel step |
+| | `fast_multiplier` | `3.0` | Speed multiplier while the fast key is held |
 | | `sensitivity` | `0.15` | Mouse look, in degrees for each mouse count |
-| | `moveEaseRate` / `lookEaseRate` | `6.0` / `14.0` | How fast smooth motion catches up. Higher is quicker |
-| | `pitchLimit` | `89.9` | Highest up or down look angle, in degrees. Maximum `89.9` |
-| | `maxFrameDt` | `0.1` | Longest frame time used for motion, in seconds. Maximum `1.0` |
-| | `smoothAtStart` | `true` | Smooth motion is on when freecam turns on |
-| `ui` | `eventQueueCapacity` | `256` | Size of the queue that carries input to the UI. Range `16` to `4096` |
-| | `maxVertices` | `65536` | A UI frame with more vertices is not drawn. Range `4096` to `1048576` |
-| `markers` | `enabled` | `true` | Draw the point boxes and path line in the world |
-| | `maxShapes` | `4096` | Most shapes drawn at one time. Range `2560` to `8192` |
-| | `maxPerSend` | `400` | Most shapes sent to the game in one frame. Range `50` to `800` |
-| | `lineWeight` | `2` | `1` or `2`. `2` draws each box edge two times for a bolder line |
-| | `frustumDepth` | `1.2` | Length of a camera box, in blocks. Range `0.3` to `5.0` |
-| `lookAt` | `enabled` | `true` | Add point can store a target when the crosshair hits a block or entity |
-| | `maxDistance` | `256.0` | Length of the look-at ray, in blocks. Range `8` to `512` |
-| `screenshot` | `folder` | `%USERPROFILE%\Pictures\Screenshots` | Where screenshots go. Variables are expanded and the folder is created. A blank value uses the default |
-| top level | `exitWaitFrames` | `10` | Frames that the exit takes before control returns to your player. Minimum `4` |
-| | `telemetry` | `false` | Write frame timing to the log, for testing |
+| | `move_ease_rate` / `look_ease_rate` | `6.0` / `14.0` | How fast smooth motion catches up. Higher is quicker |
+| | `pitch_limit` | `89.9` | Highest up or down look angle, in degrees. Maximum `89.9` |
+| | `max_frame_dt` | `0.1` | Longest frame time used for motion, in seconds. Maximum `1.0` |
+| | `smooth_at_start` | `true` | Smooth motion is on when freecam turns on |
+| `markers` | `enabled` | `true` | Draw the point boxes and path line in the world (restart) |
+| | `max_shapes` | `4096` | Most shapes drawn at one time. Range `2560` to `8192` (restart) |
+| | `max_per_send` | `400` | Most shapes sent to the game in one frame. Range `50` to `800` (restart) |
+| | `line_weight` | `2` | `1` or `2`. `2` draws each box edge two times for a bolder line (restart) |
+| | `frustum_depth` | `1.2` | Length of a camera box, in blocks. Range `0.3` to `5.0` (restart) |
+| `look_at` | `enabled` | `true` | Add point can store a target when the crosshair hits a block or entity |
+| | `max_distance` | `256.0` | Length of the look-at ray, in blocks. Range `8` to `512` |
+| `screenshot` | `folder` | `%USERPROFILE%\Pictures\Screenshots` | Where screenshots go. Not in the panel: write it in `config.hcl`, for example `screenshot { folder = "D:\\Shots" }`. Variables are expanded and the folder is created. A blank value uses the default |
+| top level | `exit_wait_frames` | `10` | Frames that the exit takes before control returns to your player. Minimum `4` (restart) |
+| | `telemetry` | `false` | Write frame timing and key-to-move times to the log, for testing (restart) |
 
 </details>
 
@@ -178,7 +176,7 @@ Speeds are in blocks per second. Keys are Windows virtual-key codes.
 <details>
 <summary><b>The mod does not load.</b></summary>
 
-Check that LeviLamina is the **client** build for your game version (see [Compatibility](#-compatibility)), and that the mod folder is named exactly `mods/alaydriem-freecam/`. The LeviLamina log in the game folder's `logs` folder names the cause.
+Check that LeviLamina is the **client** build for your game version (see [Compatibility](#-compatibility)), that Alaydriem Mod Manager is installed, and that the mod folder is named exactly `mods/alaydriem-freecam/`. The LeviLamina log in the game folder's `logs` folder names the cause. Once freecam has started, its own log is in `logs/amm/alaydriem-freecam/`.
 
 </details>
 
@@ -214,9 +212,10 @@ No. Freecam uses the keyboard and mouse only.
 
 ## 🛠️ Building from source
 
-You need Windows 10 or 11 (x64) and [mise](https://mise.jdx.dev). mise installs the pinned versions of xmake and cbindgen. You also need Rust through rustup (the version is pinned in `rust-toolchain.toml`), [cargo-nextest](https://nexte.st), and LLVM with `clang-cl`.
+You need Windows 10 or 11 (x64) and [mise](https://mise.jdx.dev). The mod manager's crates are path dependencies, so clone [levi-crates](https://github.com/alaydriem/levi-crates) next to this repo, as `../levi-crates`. mise installs the pinned versions of xmake and cbindgen. You also need Rust through rustup (the version is pinned in `rust-toolchain.toml`), [cargo-nextest](https://nexte.st), and LLVM with `clang-cl`.
 
 ```powershell
+git clone https://github.com/alaydriem/levi-crates
 git clone https://github.com/alaydriem/levi-freecam
 cd levi-freecam
 mise trust
@@ -228,7 +227,7 @@ mise run test        # every Rust test
 <details>
 <summary><b>How the code is organised</b></summary>
 
-All the decisions are made in Rust: `freecam/core` (camera motion, input, paths, no game code) and `freecam/ffi` (the C interface). A thin C++ part in `shim/` connects to the game through LeviLamina, applies the camera each frame, and draws the in-world path markers and the egui interface (the playback bar). Run `mise tasks` to see every task.
+All the decisions are made in Rust: `freecam/core` (camera motion, input, paths, no game code), `freecam/ui` (the playback bar views, drawn with the mod manager's Studio Dark theme) and `freecam/ffi` (the C interface and the link to the mod manager, which delivers the keys and the mouse and draws the bar). A thin C++ part in `shim/` connects to the game through LeviLamina, applies the camera each frame and delivers the in-world path markers. Run `mise tasks` to see every task.
 
 </details>
 
@@ -242,4 +241,4 @@ All the decisions are made in Rust: `freecam/core` (camera motion, input, paths,
 
 BSD 3-Clause. See [LICENSE](./LICENSE).
 
-Thanks to [LeviLamina](https://github.com/LiteLDev/LeviLamina) and [egui](https://github.com/emilk/egui).
+Thanks to [LeviLamina](https://github.com/LiteLDev/LeviLamina) and [egui](https://github.com/emilk/egui). The bar uses the Nordwand Mono font (SIL Open Font License 1.1, see `OFL.txt` in the mod folder).

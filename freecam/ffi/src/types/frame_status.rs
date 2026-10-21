@@ -14,7 +14,6 @@ pub struct FcFrameStatus {
     pub ready: u8,
     pub player_camera_active: u8,
     pub start_pose: FcPose,
-    pub gui_hidden: u8,
     pub health: i32,
     pub dimension: i32,
     pub has_rendered_position: u8,
@@ -31,8 +30,6 @@ pub struct FcFrameStatus {
     pub last_shape_send_us: f32,
     // raised by one each time the shim captures a ClientNetworkHandler; 0 while none was captured
     pub handler_generation: u32,
-    /// raised by one on each Present; a screenshot counts its frames in presents, not in fc_frame calls
-    pub present_count: u32,
 }
 
 impl From<&FcFrameStatus> for FrameStatus {
@@ -46,7 +43,6 @@ impl From<&FcFrameStatus> for FrameStatus {
             ready: value.ready != 0,
             player_camera_active: value.player_camera_active != 0,
             start_pose: value.start_pose.to_core(),
-            gui_hidden: value.gui_hidden != 0,
             health: value.health,
             dimension: value.dimension,
             rendered_position: optional(value.has_rendered_position, &value.rendered_position),
@@ -56,7 +52,10 @@ impl From<&FcFrameStatus> for FrameStatus {
             aspect: value.aspect,
             last_shape_send_us: value.last_shape_send_us,
             handler_generation: value.handler_generation,
-            present_count: value.present_count,
+            // the frames the mod manager drew, filled in by the handle
+            present_count: 0,
+            // the handle asks the mod manager while freecam exits
+            camera_held_by_other: false,
         }
     }
 }

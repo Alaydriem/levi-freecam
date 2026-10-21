@@ -9,7 +9,8 @@ autotests = false
 [dependencies]
 egui.workspace = true
 freecam-core.workspace = true
-log.workspace = true
+curia.workspace = true
+studio-ui.workspace = true
 
 [dev-dependencies]
 stats_alloc.workspace = true

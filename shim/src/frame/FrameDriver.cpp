@@ -4,12 +4,8 @@
 #include "camera/CameraInstructions.h"
 #include "camera/RenderOverride.h"
 #include "frame/FrameStatusReader.h"
-#include "hud/HudControl.h"
-#include "input/MouseGrab.h"
-#include "mod/FreecamMod.h"
+#include "bridge/ModLog.h"
 #include "network/ClientPacketHandler.h"
-#include "render/FrameCapture.h"
-#include "render/OverlayHook.h"
 #include "world/LookRay.h"
 #include "world/ShapeDelivery.h"
 
@@ -29,11 +25,6 @@ constexpr uint8_t CAMERA_SET   = 1;
 constexpr uint8_t CAMERA_CLEAR = 2;
 
 std::atomic<ClientInstance*> g_client{nullptr};
-std::atomic<bool>            g_blockInput{false};
-std::atomic<bool>            g_uiVisible{false};
-std::atomic<bool>            g_uiHidden{false};
-std::atomic<bool>            g_cursorMode{false};
-std::atomic<bool>            g_lookDrag{false};
 std::atomic<bool>            g_cameraOwned{false};
 std::atomic<float>           g_lastShapeSendUs{0.0f};
 
@@ -49,7 +40,7 @@ std::atomic<bool> g_updateThreadLogged{false};
 
 void noteThread(std::atomic<bool>& logged, char const* site) {
     if (logged.exchange(true)) return;
-    FreecamMod::getInstance().getSelf().getLogger().info("frame: {} runs on thread {}", site, GetCurrentThreadId());
+    ModLog::info("frame: {} runs on thread {}", site, GetCurrentThreadId());
 }
 
 double microsecondsSince(LARGE_INTEGER const& start) {
@@ -69,14 +60,11 @@ void addDeliveryStatus(FcFrameStatus& status) {
     status.handler_generation = ShapeDelivery::generation();
 }
 
-// asks Rust for this frame; a failed call gives the zeroed output, which does nothing. The screenshot answers the
-// render thread and the PNG worker left go in first, and a capture this frame asks for goes to the next Present
+// asks Rust for this frame; a failed call gives the zeroed output, which does nothing
 FcFrameOutput runFrame(const FcHandle* handle, FcFrameStatus status) {
     addDeliveryStatus(status);
-    FrameCapture::deliver(RustBridge::mutableHandle());
     FcFrameOutput out{};
     if (fc_frame(handle, &status, &out) != FC_STATUS_OK) out = FcFrameOutput{};
-    if (out.capture_active != 0) FrameCapture::request(out.capture_sequence, OverlayHook::presentCount());
     return out;
 }
 
@@ -102,18 +90,9 @@ void answerRay(FcFrameOutput const& out, LocalPlayer* player) {
     else fc_ray_result(handle, 0, 0.0f, 0.0f, 0.0f);
 }
 
-void applyRest(ClientInstance* client, FcFrameOutput const& out) {
-    if (client) HudControl::apply(*client, out.gui);
+void applyRest(FcFrameOutput const& out) {
     RenderOverride::set(out.has_override != 0, out.override_pose);
-    g_blockInput.store(out.block_input != 0, std::memory_order_relaxed);
-    g_uiVisible.store(out.ui_visible != 0, std::memory_order_relaxed);
-    g_uiHidden.store(out.hide_ui != 0, std::memory_order_relaxed);
-    // stored before the mouse command, so the grab hook lets freecam's own grab through once cursor mode ends, and the
-    // drag's grab through while a look drag starts
-    g_cursorMode.store(out.cursor_mode != 0, std::memory_order_relaxed);
-    g_lookDrag.store(out.look_drag != 0, std::memory_order_relaxed);
     g_cameraOwned.store(out.camera_owned != 0, std::memory_order_relaxed);
-    if (client) MouseGrab::apply(*client, out.mouse);
 }
 
 } // namespace
@@ -132,7 +111,7 @@ void FrameDriver::beforeSetupCamera() {
     deliverMarkers(out);
     answerRay(out, player);
     applyCamera(out, player);
-    applyRest(client, out);
+    applyRest(out);
 }
 
 void FrameDriver::tick(ClientInstance& client) {
@@ -147,27 +126,12 @@ void FrameDriver::tick(ClientInstance& client) {
     deliverMarkers(out);
     // no world is active here, so there is nothing to cast through
     answerRay(out, nullptr);
-    applyRest(&client, out);
+    applyRest(out);
 }
-
-bool FrameDriver::blocksInput() { return g_blockInput.load(std::memory_order_relaxed); }
-
-bool FrameDriver::cursorMode() { return g_cursorMode.load(std::memory_order_relaxed); }
-
-bool FrameDriver::lookDrag() { return g_lookDrag.load(std::memory_order_relaxed); }
-
-bool FrameDriver::uiVisible() { return g_uiVisible.load(std::memory_order_relaxed); }
-
-bool FrameDriver::uiHidden() { return g_uiHidden.load(std::memory_order_relaxed); }
 
 bool FrameDriver::cameraOwned() { return g_cameraOwned.load(std::memory_order_relaxed); }
 
 void FrameDriver::reset() {
-    g_blockInput.store(false, std::memory_order_relaxed);
-    g_uiVisible.store(false, std::memory_order_relaxed);
-    g_uiHidden.store(false, std::memory_order_relaxed);
-    g_cursorMode.store(false, std::memory_order_relaxed);
-    g_lookDrag.store(false, std::memory_order_relaxed);
     g_cameraOwned.store(false, std::memory_order_relaxed);
     g_lastShapeSendUs.store(0.0f, std::memory_order_relaxed);
     g_client.store(nullptr, std::memory_order_release);

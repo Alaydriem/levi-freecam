@@ -7,10 +7,11 @@
 
 namespace levi_freecam {
 
-// owns the Rust handle and the log callback; every call into Rust goes through handle()
+// owns the Rust handle; every call into Rust goes through handle()
 class RustBridge {
 public:
-    static bool create(const std::filesystem::path& configFile);
+    // registers with the mod manager through fc_create; false when it is missing or refused
+    static bool create(const std::filesystem::path& configDir);
 
     static void destroy();
 

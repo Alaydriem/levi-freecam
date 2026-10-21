@@ -1,4 +1,5 @@
 #include "camera/CameraInstructions.h"
+#include "bridge/ModLog.h"
 
 #include "mod/FreecamMod.h"
 #include "network/ClientPacketHandler.h"
@@ -51,7 +52,7 @@ CameraInstructionPacket* reusablePacket(Delivery& state) {
             MinecraftPackets::createPacket(MinecraftPacketIds::CameraInstruction)
         );
         if (!state.packet) {
-            FreecamMod::getInstance().getSelf().getLogger().warn("could not create a camera instruction packet");
+            ModLog::warn("could not create a camera instruction packet");
         }
     }
     return state.packet.get();

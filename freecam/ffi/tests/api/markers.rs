@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use freecam_core::structs::{MarkerEntry, MarkerKind, MarkerShape, Vec3};
+use freecam_core::structs::{FreecamAction, MarkerEntry, MarkerKind, MarkerShape, Vec3};
 use freecam_ffi::api::markers::{fc_markers_shutdown, fc_ray_result};
 use freecam_ffi::types::{FcMarkerEntry, FcStatus, FcVec3};
 
@@ -33,9 +33,9 @@ fn ray_result_null_handle_is_error() {
 #[test]
 fn ray_result_reaches_core() {
     let session = FfiSession::new();
-    session.chord(FfiSession::P);
+    FfiSession::tap(FreecamAction::Toggle);
     session.frame(&FfiSession::status_at(0.05, 1));
-    session.chord(FfiSession::B);
+    FfiSession::tap(FreecamAction::AddPoint);
     let (_, out) = session.frame(&FfiSession::status_at(0.10, 1));
     assert_eq!(out.ray.active, 1);
 

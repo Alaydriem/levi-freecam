@@ -1,36 +1,31 @@
 use std::sync::Mutex;
 
-use log::{Level, LevelFilter, Log, Metadata, Record};
+use curia::{Dispatcher, Level, LogEvent, Logger, Sink};
 
-// a logger that keeps every record, so a test can count the warnings it caused
-pub struct Logs {
-    records: Mutex<Vec<(Level, String)>>,
-}
+// a Curia sink that keeps every event, so a test can count the warnings it caused
+pub struct Logs;
 
-static LOGS: Logs = Logs { records: Mutex::new(Vec::new()) };
+static RECORDS: Mutex<Vec<(Level, String)>> = Mutex::new(Vec::new());
 
 impl Logs {
-    // installs the logger once per test process; later calls change nothing
+    // installs the sink once per test process; later calls change nothing
     pub fn install() {
-        let _ = log::set_logger(&LOGS);
-        log::set_max_level(LevelFilter::Trace);
+        let _ = Logger::install(Box::new(Dispatcher::new(vec![Logs])));
     }
 
-    // records at `level` whose message contains `text`
+    // events at `level` whose message contains `text`
     pub fn count(level: Level, text: &str) -> usize {
-        let records = LOGS.records.lock().unwrap();
+        let records = RECORDS.lock().unwrap();
         records.iter().filter(|(at, message)| *at == level && message.contains(text)).count()
     }
 }
 
-impl Log for Logs {
-    fn enabled(&self, _metadata: &Metadata) -> bool {
-        true
+impl Sink for Logs {
+    fn level(&self) -> Level {
+        Level::Trace
     }
 
-    fn log(&self, record: &Record) {
-        self.records.lock().unwrap().push((record.level(), record.args().to_string()));
+    fn emit(&self, event: &LogEvent) {
+        RECORDS.lock().unwrap().push((event.level, event.message.clone()));
     }
-
-    fn flush(&self) {}
 }

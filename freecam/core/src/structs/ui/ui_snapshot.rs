@@ -9,6 +9,8 @@ pub const TOAST_FILE_CAPACITY: usize = 64;
 pub struct UiSnapshot {
     pub visible: bool,
     pub cursor_mode: bool,
+    // the mod manager can take a screenshot; the bar's Screenshot button takes clicks only then
+    pub can_screenshot: bool,
     pub point_count: u32,
     // distance along the path of each point; the first `point_count` entries are used, the rest are 0
     pub point_distances: [f32; PATH_CAPACITY],
@@ -38,6 +40,7 @@ impl Default for UiSnapshot {
         Self {
             visible: false,
             cursor_mode: false,
+            can_screenshot: false,
             point_count: 0,
             point_distances: [0.0; PATH_CAPACITY],
             playhead: 0.0,

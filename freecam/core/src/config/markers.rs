@@ -1,4 +1,3 @@
-use log::warn;
 use serde::{Deserialize, Serialize};
 
 // every box and target marker of a full look-at path at line weight 1
@@ -12,7 +11,7 @@ const MIN_FRUSTUM_DEPTH: f32 = 0.3;
 const MAX_FRUSTUM_DEPTH: f32 = 5.0;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
+#[serde(default)]
 pub struct MarkerConfig {
     pub enabled: bool,
     // bound of the shape slots, and of every marker buffer
@@ -44,7 +43,7 @@ impl MarkerConfig {
             frustum_depth: depth.clamp(MIN_FRUSTUM_DEPTH, MAX_FRUSTUM_DEPTH),
         };
         if sanitized != self {
-            warn!("config markers values out of range were clamped: {sanitized:?}");
+            curia::warn!("config markers values out of range were clamped", { values: format!("{sanitized:?}") });
         }
         sanitized
     }

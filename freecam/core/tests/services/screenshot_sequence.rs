@@ -1,17 +1,15 @@
+use amm_core::structs::event::{KeybindPhase, ModEvent};
 use freecam_core::config::{FreecamConfig, LookAtConfig, MarkerConfig};
 use freecam_core::services::FreecamController;
-use freecam_core::structs::{CaptureRequest, FrameOutput, FrameStatus, MarkerKind, ToastKind, UiAction};
+use freecam_core::structs::{
+    CaptureRequest, FrameOutput, FrameStatus, FreecamAction, MarkerKind, StartLeases, ToastKind, UiAction,
+};
 
-use log::Level;
+use curia::Level;
 
 use crate::support::frames::Frames;
 use crate::support::logs::Logs;
 
-const CTRL: u32 = 0x11;
-const P: u32 = 0x50;
-const E: u32 = 0x45;
-const B: u32 = 0x42;
-const W: u32 = 0x57;
 const FRAME_STEP: f64 = 0.05;
 const POINTS: usize = 3;
 
@@ -52,10 +50,17 @@ impl Rig {
         self.controller.on_capture_written(request.sequence, true, name);
     }
 
-    fn chord(&mut self, key: u32) {
-        self.controller.on_key(CTRL, true);
-        self.controller.on_key(key, true);
-        self.controller.on_key(key, false);
+    // the manager's keybind event, then the lease hand-off the FFI handle runs for a start request
+    fn keybind(&mut self, action: FreecamAction, phase: KeybindPhase) {
+        self.controller.on_link_event(&ModEvent::Keybind { action: action.index(), phase });
+        if self.controller.take_start_request() {
+            self.controller.finish_start(StartLeases::Granted);
+        }
+    }
+
+    fn tap(&mut self, action: FreecamAction) {
+        self.keybind(action, KeybindPhase::Pressed);
+        self.keybind(action, KeybindPhase::Released);
     }
 
     // freecam on, a few points, bar mode on, markers settled in the world
@@ -66,15 +71,15 @@ impl Rig {
     // the camera walks forward between points, so the path has length
     fn with_points(markers: MarkerConfig, points: usize) -> Self {
         let mut rig = Self::with_markers(markers);
-        rig.chord(P);
+        rig.tap(FreecamAction::Toggle);
         rig.frame();
-        rig.controller.on_key(W, true);
+        rig.keybind(FreecamAction::FlyForward, KeybindPhase::Pressed);
         for _ in 0..points {
-            rig.chord(B);
+            rig.tap(FreecamAction::AddPoint);
             rig.frames(3);
         }
-        rig.controller.on_key(W, false);
-        rig.chord(E);
+        rig.keybind(FreecamAction::FlyForward, KeybindPhase::Released);
+        rig.tap(FreecamAction::ToggleBar);
         rig.frame();
         rig.frames(30);
         rig
@@ -132,10 +137,11 @@ fn capture_waits_for_markers_then_times_out() {
     assert!(waited >= 4, "capture came after {waited} frame(s)");
     assert!(rig.controller.marker_batch().is_empty());
 
-    // no taken answer: 10 presents after the request the drawing returns with a Failed toast
-    let hidden: Vec<bool> = (0..10).map(|_| rig.frame().hide_ui).collect();
-    assert_eq!(hidden[..9], [true; 9]);
-    assert!(!hidden[9]);
+    // no taken answer: the mod manager gives a copy up to 30 frames, so the drawing returns with a Failed toast only
+    // 40 presents after the request
+    let hidden: Vec<bool> = (0..40).map(|_| rig.frame().hide_ui).collect();
+    assert_eq!(hidden[..39], [true; 39]);
+    assert!(!hidden[39]);
     let snapshot = rig.controller.ui_snapshot();
     assert_eq!(snapshot.toast, ToastKind::Failed);
     assert!(snapshot.visible);
@@ -365,16 +371,16 @@ fn capture_waits_two_presents_after_markers_leave() {
         "removes at {last_remove_present}, capture at {capture_present}"
     );
 
-    // the timeout is 10 presents, so 20 calls here; the second call of the capture's present starts it
+    // the timeout is 40 presents, so 80 calls here; the second call of the capture's present starts it
     let mut hidden = Vec::new();
-    for offset in 0..12 {
+    for offset in 0..42 {
         let calls = if offset == 0 { 1 } else { 2 };
         for _ in 0..calls {
             hidden.push(rig.call_in(capture_present + offset).hide_ui);
         }
     }
     let shown_at = hidden.iter().position(|hide| !hide).expect("drawing returns");
-    assert_eq!(shown_at, 19, "{hidden:?}");
+    assert_eq!(shown_at, 79, "{hidden:?}");
 }
 
 #[test]
@@ -396,7 +402,7 @@ fn leaving_freecam_drops_the_shot() {
     let mut rig = Rig::ready(MarkerConfig::default());
     rig.shoot();
     rig.frame();
-    rig.chord(P);
+    rig.tap(FreecamAction::Toggle);
     let outputs = rig.frames(40);
 
     assert!(outputs.iter().all(|out| out.capture.is_none()));

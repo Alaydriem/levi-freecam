@@ -1,7 +1,8 @@
 use egui::{AsIdSalt, CursorIcon, IdSalt, Rect, Response, Sense, Ui};
 
-use super::{ButtonState, Draw, Motion};
-use crate::theme::{Metrics, Palette};
+use super::ButtonState;
+use studio_ui::theme::{Metrics, StudioPalette};
+use studio_ui::widgets::{Draw, Motion};
 
 /// A square button with no fill at rest, holding one icon glyph.
 pub struct IconButton {
@@ -32,17 +33,22 @@ impl IconButton {
         let (hover, press) = if disabled { (0.0, 0.0) } else { Motion::states(ui.ctx(), &response) };
         let painter = ui.painter();
 
-        Draw::fill(painter, rect, Metrics::RADIUS_CONTROL, Palette::alpha(Palette::BG_HOVER, hover));
+        Draw::fill(painter, rect, Metrics::RADIUS_CONTROL, StudioPalette::alpha(StudioPalette::BG_HOVER, hover));
         if press > 0.0 {
-            Draw::fill(painter, rect, Metrics::RADIUS_CONTROL, Palette::alpha(Palette::BG_ACTIVE, press * 0.6));
+            Draw::fill(
+                painter,
+                rect,
+                Metrics::RADIUS_CONTROL,
+                StudioPalette::alpha(StudioPalette::BG_ACTIVE, press * 0.6),
+            );
         }
         let color = match self.state {
-            ButtonState::Disabled => Palette::TEXT_FAINT,
+            ButtonState::Disabled => StudioPalette::TEXT_FAINT,
             ButtonState::Armed => {
-                Draw::outline(painter, rect, Metrics::RADIUS_CONTROL, 1.5, Palette::ACCENT_HOVER);
-                Palette::ACCENT_HOVER
+                Draw::outline(painter, rect, Metrics::RADIUS_CONTROL, 1.5, StudioPalette::ACCENT_HOVER);
+                StudioPalette::ACCENT_HOVER
             }
-            ButtonState::Normal => Palette::mix(Palette::TEXT_DIM, Palette::TEXT, hover),
+            ButtonState::Normal => StudioPalette::mix(StudioPalette::TEXT_DIM, StudioPalette::TEXT, hover),
         };
         Draw::icon(painter, rect.center(), self.icon, self.icon_size, color);
         response

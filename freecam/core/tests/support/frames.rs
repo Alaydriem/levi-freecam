@@ -22,7 +22,6 @@ impl Frames {
             ready: true,
             player_camera_active: true,
             start_pose: Self::start_pose(),
-            gui_hidden: false,
             health: 20,
             dimension: 0,
             rendered_position: None,
@@ -33,6 +32,7 @@ impl Frames {
             last_shape_send_us: 0.0,
             handler_generation: 1,
             present_count: Self::present_count(time_seconds),
+            camera_held_by_other: false,
         }
     }
 }

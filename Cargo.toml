@@ -9,7 +9,6 @@ rust-version = "1.98"
 publish = false
 
 [workspace.dependencies]
-log = "0.4.34"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 crossbeam-queue = "0.3.14"
@@ -17,6 +16,13 @@ thiserror = "2.0.21"
 tempfile = "3.27.0"
 stats_alloc = "0.1.10"
 egui = "=0.37.0"
+amm-abi = { path = "../levi-crates/crates/amm-abi" }
+amm-client = { path = "../levi-crates/crates/amm-client" }
+amm-core = { path = "../levi-crates/crates/amm-core" }
+studio-ui = { path = "../levi-crates/crates/studio-ui" }
+curia = "=0.2.2"
+hcl-rs = "=0.19.8"
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
 freecam-core = { path = "freecam/core" }
 freecam-ui = { path = "freecam/ui" }
 

@@ -26,6 +26,19 @@ impl CameraMotion {
         }
     }
 
+    // a new config while freecam runs: the pose stays, a changed start speed or smooth flag takes over, and the speed
+    // moves into the new range; an unchanged one leaves a wheel or toggle change of this session alone
+    pub fn set_config(&mut self, config: MotionConfig) {
+        if config.start_speed != self.config.start_speed {
+            self.speed = config.start_speed;
+        }
+        if config.smooth_at_start != self.config.smooth_at_start {
+            self.smooth = config.smooth_at_start;
+        }
+        self.speed = self.speed.clamp(config.min_speed, config.max_speed);
+        self.config = config;
+    }
+
     // places the camera at start and keeps the current speed
     pub fn reset(&mut self, start: CameraPose) {
         self.pose = start;

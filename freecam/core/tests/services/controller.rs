@@ -1,23 +1,18 @@
 use std::collections::HashMap;
 
-use freecam_core::config::{FreecamConfig, LookAtConfig, MarkerConfig, MotionConfig};
+use amm_core::structs::descriptor::Capability;
+use amm_core::structs::event::{KeybindPhase, ModEvent};
+use amm_core::structs::registry::ModIndex;
+use freecam_core::config::{FreecamConfig, KeyConfig, LookAtConfig, MarkerConfig, MotionConfig};
 use freecam_core::services::FreecamController;
 use freecam_core::structs::{
-    CameraCommand, CameraPose, FrameOutput, FrameStatus, FreecamState, GuiCommand, MarkerKind, MarkerShape,
-    MouseCommand, PathKey, RayRequest, ServerInstruction, UiAction, Vec3,
+    CameraCommand, CameraPose, FrameOutput, FrameStatus, FreecamAction, FreecamState, MarkerKind, MarkerShape, PathKey,
+    RayRequest, ServerInstruction, StartLeases, UiAction, Vec3,
 };
 
 use crate::support::frames::Frames;
 
-const CTRL: u32 = 0x11;
-const P: u32 = 0x50;
-const BRACKET: u32 = 0xDB;
-const W: u32 = 0x57;
-const B: u32 = 0x42;
-const DEL: u32 = 0x2E;
-const ENTER: u32 = 0x0D;
-const E: u32 = 0x45;
-const RIGHT: u8 = 2;
+const RIGHT: u8 = 1;
 const FRAME_STEP: f64 = 0.05;
 const EXIT_WAIT: usize = 10;
 
@@ -101,12 +96,40 @@ impl Rig {
         (0..count).map(|_| self.frame()).collect()
     }
 
-    // presses Ctrl+P and releases P, leaving Ctrl held
-    fn press_toggle(&mut self) -> bool {
-        self.controller.on_key(CTRL, true);
-        let consumed = self.controller.on_key(P, true);
-        self.controller.on_key(P, false);
-        consumed
+    // the manager's keybind event, then the lease hand-off the FFI handle runs for a start request
+    fn keybind(&mut self, action: FreecamAction, phase: KeybindPhase) {
+        self.controller.on_link_event(&ModEvent::Keybind { action: action.index(), phase });
+        if self.controller.take_start_request() {
+            self.controller.finish_start(StartLeases::Granted);
+        }
+    }
+
+    // presses and releases the keybind
+    fn tap(&mut self, action: FreecamAction) {
+        self.keybind(action, KeybindPhase::Pressed);
+        self.keybind(action, KeybindPhase::Released);
+    }
+
+    // presses or releases a held keybind
+    fn hold(&mut self, action: FreecamAction, down: bool) {
+        self.keybind(action, if down { KeybindPhase::Pressed } else { KeybindPhase::Released });
+    }
+
+    fn event(&mut self, event: ModEvent) {
+        self.controller.on_link_event(&event);
+    }
+
+    // mouse movement while freecam holds Input
+    fn look(&mut self, dx: f32, dy: f32) {
+        self.event(ModEvent::PointerDelta { dx, dy });
+    }
+
+    fn wheel(&mut self, delta: f32) {
+        self.event(ModEvent::Wheel { delta });
+    }
+
+    fn press_toggle(&mut self) {
+        self.tap(FreecamAction::Toggle);
     }
 
     fn start(&mut self) -> FrameOutput {
@@ -120,56 +143,44 @@ impl Rig {
         self.frame()
     }
 
-    // presses Ctrl+key and releases the key, leaving Ctrl held
-    fn chord(&mut self, key: u32) {
-        self.controller.on_key(CTRL, true);
-        self.controller.on_key(key, true);
-        self.controller.on_key(key, false);
-    }
-
-    // presses and releases Del
+    // presses and releases the delete-point keybind
     fn press_delete(&mut self) {
-        self.controller.on_key(DEL, true);
-        self.controller.on_key(DEL, false);
+        self.tap(FreecamAction::DeletePoint);
     }
 
     // freecam on with the smooth camera off, so the camera stops as soon as keys are released
     fn start_sharp(&mut self) -> CameraPose {
         let pose = self.start().render_override.unwrap();
-        self.chord(BRACKET);
-        self.controller.on_key(CTRL, false);
+        self.tap(FreecamAction::ToggleSmooth);
         pose
     }
 
     // walks forward at the scroll speed and returns the pose reached
     fn walk(&mut self, frames: usize) -> CameraPose {
-        self.controller.on_key(CTRL, false);
-        self.controller.on_key(W, true);
+        self.hold(FreecamAction::FlyForward, true);
         let mut pose = self.frame().render_override.unwrap();
         for _ in 1..frames {
             pose = self.frame().render_override.unwrap();
         }
-        self.controller.on_key(W, false);
+        self.hold(FreecamAction::FlyForward, false);
         pose
     }
 
     // starts freecam and records two points `frames` walking frames apart
     fn build_path(&mut self, frames: usize) -> (CameraPose, CameraPose) {
         let first = self.start_sharp();
-        self.chord(B);
+        self.tap(FreecamAction::AddPoint);
         let last = self.walk(frames);
-        self.chord(B);
-        self.controller.on_key(CTRL, false);
+        self.tap(FreecamAction::AddPoint);
         (first, last)
     }
 
     // the same as build_path but with the smooth camera left on
     fn build_smooth_path(&mut self, frames: usize) -> (CameraPose, CameraPose) {
         let first = Self::pose(&self.start());
-        self.chord(B);
+        self.tap(FreecamAction::AddPoint);
         let last = self.walk(frames);
-        self.chord(B);
-        self.controller.on_key(CTRL, false);
+        self.tap(FreecamAction::AddPoint);
         (first, last)
     }
 
@@ -200,13 +211,13 @@ impl Rig {
 
     // presses Ctrl+E, leaving Ctrl held, and runs one frame
     fn cursor(&mut self) -> FrameOutput {
-        self.chord(E);
+        self.tap(FreecamAction::ToggleBar);
         self.frame()
     }
 
-    // the right mouse button down or up; returns whether the game must not see it
-    fn right(&mut self, down: bool) -> bool {
-        self.controller.on_mouse_button(RIGHT, i8::from(down))
+    // the right mouse button down or up
+    fn right(&mut self, down: bool) {
+        self.event(ModEvent::PointerButton { button: RIGHT, down, x: 0.0, y: 0.0 });
     }
 
     // a right press away from the UI and one frame, which starts a look drag in bar mode
@@ -224,12 +235,11 @@ impl Rig {
     // starts freecam with the smooth camera off and records three points 20 walking frames apart
     fn three_points(&mut self) -> [CameraPose; 3] {
         let first = self.start_sharp();
-        self.chord(B);
+        self.tap(FreecamAction::AddPoint);
         let second = self.walk(20);
-        self.chord(B);
+        self.tap(FreecamAction::AddPoint);
         let third = self.walk(20);
-        self.chord(B);
-        self.controller.on_key(CTRL, false);
+        self.tap(FreecamAction::AddPoint);
         [first, second, third]
     }
 
@@ -252,8 +262,8 @@ fn toggle_starts_with_set_hide_and_block() {
     let out = rig.start();
     assert_eq!(rig.controller.state(), FreecamState::On);
     assert_eq!(out.camera, CameraCommand::Set(Frames::start_pose()));
-    assert_eq!(out.gui, GuiCommand::Hide);
-    assert!(out.block_input);
+    assert!(out.leases_wanted);
+    assert!(out.leases_wanted);
     assert_eq!(out.render_override, Some(Frames::start_pose()));
 }
 
@@ -264,7 +274,7 @@ fn refuses_when_not_ready() {
     let out = rig.frame_with(|s| s.ready = false);
     assert_eq!(rig.controller.state(), FreecamState::Off);
     assert_eq!(out.camera, CameraCommand::None);
-    assert_eq!(out.gui, GuiCommand::None);
+    assert!(!out.leases_wanted);
 }
 
 #[test]
@@ -274,7 +284,7 @@ fn refuses_when_server_camera_active() {
     let out = rig.frame_with(|s| s.player_camera_active = false);
     assert_eq!(rig.controller.state(), FreecamState::Off);
     assert_eq!(out.camera, CameraCommand::None);
-    assert_eq!(out.gui, GuiCommand::None);
+    assert!(!out.leases_wanted);
 }
 
 #[test]
@@ -284,7 +294,7 @@ fn refuses_when_menu_open() {
     let out = rig.frame_with(|s| s.menu_open = true);
     assert_eq!(rig.controller.state(), FreecamState::Off);
     assert_eq!(out.camera, CameraCommand::None);
-    assert_eq!(out.gui, GuiCommand::None);
+    assert!(!out.leases_wanted);
 }
 
 #[test]
@@ -305,12 +315,12 @@ fn exit_waits_then_clears() {
     for out in &exit[..EXIT_WAIT - 1] {
         assert_eq!(out.camera, CameraCommand::None);
         assert_eq!(out.render_override, None);
-        assert!(out.block_input);
+        assert!(out.leases_wanted);
     }
     let last = exit[EXIT_WAIT - 1];
     assert_eq!(last.camera, CameraCommand::Clear);
-    assert_eq!(last.gui, GuiCommand::Show);
-    assert!(!last.block_input);
+    assert!(!last.leases_wanted);
+    assert!(!last.leases_wanted);
     assert_eq!(rig.controller.state(), FreecamState::Off);
     assert!(exit.iter().all(|out| !matches!(out.camera, CameraCommand::Set(_))));
 }
@@ -328,19 +338,6 @@ fn second_toggle_during_exit_is_ignored() {
     assert_eq!(exit[EXIT_WAIT - 1].camera, CameraCommand::Clear);
     assert_eq!(rig.controller.state(), FreecamState::Off);
     assert!(rig.frames(5).iter().all(|out| out.camera == CameraCommand::None));
-}
-
-#[test]
-fn gui_left_hidden_if_user_hid_it() {
-    let mut rig = Rig::new();
-    rig.press_toggle();
-    let started = rig.frame_with(|s| s.gui_hidden = true);
-    assert_eq!(started.gui, GuiCommand::Hide);
-    rig.begin_exit();
-    let exit = rig.frames(EXIT_WAIT - 1);
-    let last = exit[exit.len() - 1];
-    assert_eq!(last.camera, CameraCommand::Clear);
-    assert_eq!(last.gui, GuiCommand::None);
 }
 
 #[test]
@@ -381,13 +378,13 @@ fn dimension_change_starts_exit() {
 fn server_set_hands_over_without_clear() {
     let mut rig = Rig::new();
     rig.start();
-    rig.controller.on_server_instruction(ServerInstruction::SetOrClear);
+    rig.controller.on_server_instruction(ServerInstruction::SetOrClear, false);
     let out = rig.frame();
     assert_eq!(rig.controller.state(), FreecamState::Off);
     assert_eq!(out.camera, CameraCommand::None);
     assert_eq!(out.render_override, None);
-    assert_eq!(out.gui, GuiCommand::Show);
-    assert!(!out.block_input);
+    assert!(!out.leases_wanted);
+    assert!(!out.leases_wanted);
     assert!(rig.frames(20).iter().all(|out| out.camera == CameraCommand::None));
 }
 
@@ -397,19 +394,19 @@ fn server_set_during_exit_cancels_clear() {
     rig.start();
     rig.begin_exit();
     rig.frames(2);
-    rig.controller.on_server_instruction(ServerInstruction::SetOrClear);
+    rig.controller.on_server_instruction(ServerInstruction::SetOrClear, false);
     let out = rig.frame();
     assert_eq!(rig.controller.state(), FreecamState::Off);
     assert_eq!(out.camera, CameraCommand::None);
-    assert_eq!(out.gui, GuiCommand::Show);
-    assert!(!out.block_input);
+    assert!(!out.leases_wanted);
+    assert!(!out.leases_wanted);
     assert!(rig.frames(20).iter().all(|out| out.camera == CameraCommand::None));
 }
 
 #[test]
 fn server_instruction_while_off_does_not_affect_next_start() {
     let mut rig = Rig::new();
-    rig.controller.on_server_instruction(ServerInstruction::SetOrClear);
+    rig.controller.on_server_instruction(ServerInstruction::SetOrClear, false);
     let out = rig.start();
     assert_eq!(rig.controller.state(), FreecamState::On);
     assert!(matches!(out.camera, CameraCommand::Set(_)));
@@ -419,7 +416,7 @@ fn server_instruction_while_off_does_not_affect_next_start() {
 fn server_other_ignored() {
     let mut rig = Rig::new();
     rig.start();
-    rig.controller.on_server_instruction(ServerInstruction::Other);
+    rig.controller.on_server_instruction(ServerInstruction::Other, false);
     rig.frame();
     assert_eq!(rig.controller.state(), FreecamState::On);
 }
@@ -430,27 +427,27 @@ fn leaving_world_turns_off_without_clear() {
     rig.start();
     let out = rig.frame_with(|s| s.in_world = false);
     assert_eq!(rig.controller.state(), FreecamState::Off);
-    assert_eq!(out.gui, GuiCommand::Show);
+    assert!(!out.leases_wanted);
     assert_eq!(out.camera, CameraCommand::None);
-    assert!(!out.block_input);
+    assert!(!out.leases_wanted);
 }
 
 #[test]
 fn menu_open_holds_camera() {
     let mut rig = Rig::new();
     rig.start();
-    rig.controller.on_key(W, true);
+    rig.hold(FreecamAction::FlyForward, true);
     let out = rig.frame_with(|s| s.menu_open = true);
     assert_eq!(out.camera, CameraCommand::Set(Frames::start_pose()));
     assert_eq!(out.render_override, Some(Frames::start_pose()));
-    assert!(out.block_input);
+    assert!(out.leases_wanted);
 }
 
 #[test]
 fn held_key_moves_camera() {
     let mut rig = Rig::new();
     rig.start();
-    rig.controller.on_key(W, true);
+    rig.hold(FreecamAction::FlyForward, true);
     rig.frame();
     let out = rig.frame();
     let moved = out.render_override.unwrap().position;
@@ -461,9 +458,8 @@ fn held_key_moves_camera() {
 fn focus_loss_clears_held_keys() {
     let mut rig = Rig::new();
     rig.start();
-    rig.controller.on_key(BRACKET, true);
-    rig.controller.on_key(BRACKET, false);
-    rig.controller.on_key(W, true);
+    rig.tap(FreecamAction::ToggleSmooth);
+    rig.hold(FreecamAction::FlyForward, true);
     rig.frame_with(|s| s.focused = false);
     let positions: Vec<_> = rig.frames(3).iter().map(|out| out.render_override.unwrap().position).collect();
     assert_eq!(positions[0], positions[1]);
@@ -474,18 +470,10 @@ fn focus_loss_clears_held_keys() {
 fn chord_in_menu_does_not_toggle() {
     let mut rig = Rig::new();
     rig.frame_with(|s| s.menu_open = true);
-    assert!(!rig.press_toggle());
+    rig.press_toggle();
     let out = rig.frame();
     assert_eq!(rig.controller.state(), FreecamState::Off);
     assert_eq!(out.camera, CameraCommand::None);
-}
-
-#[test]
-fn mouse_buttons_blocked_only_while_active() {
-    let mut rig = Rig::new();
-    assert!(!rig.controller.on_mouse_button(1, 1));
-    rig.start();
-    assert!(rig.controller.on_mouse_button(1, 1));
 }
 
 #[test]
@@ -493,8 +481,8 @@ fn input_during_exit_does_not_leak_into_next_session() {
     let mut leaky = Rig::new();
     leaky.start();
     leaky.begin_exit();
-    leaky.controller.on_mouse_move(400, -300);
-    leaky.controller.on_mouse_button(4, 120);
+    leaky.look(400.0, -300.0);
+    leaky.wheel(1.0);
     leaky.frames(EXIT_WAIT - 1);
     assert_eq!(leaky.controller.state(), FreecamState::Off);
     let first = leaky.start();
@@ -510,8 +498,8 @@ fn input_during_exit_does_not_leak_into_next_session() {
     clean.frames(EXIT_WAIT - 1);
     clean.start();
     clean.frame();
-    leaky.controller.on_key(W, true);
-    clean.controller.on_key(W, true);
+    leaky.hold(FreecamAction::FlyForward, true);
+    clean.hold(FreecamAction::FlyForward, true);
     let leaky_pose = leaky.frame().render_override.unwrap();
     let clean_pose = clean.frame().render_override.unwrap();
     assert_eq!(leaky_pose.position, clean_pose.position);
@@ -524,7 +512,7 @@ fn leaving_world_while_exiting_turns_off_without_clear() {
     rig.begin_exit();
     let out = rig.frame_with(|s| s.in_world = false);
     assert_eq!(rig.controller.state(), FreecamState::Off);
-    assert_eq!(out.gui, GuiCommand::Show);
+    assert!(!out.leases_wanted);
     assert_eq!(out.camera, CameraCommand::None);
     assert!(rig.frames(20).iter().all(|out| out.camera == CameraCommand::None));
 }
@@ -535,13 +523,13 @@ fn del_key_without_selection_does_nothing() {
     let first = rig.start_sharp();
     rig.press_delete();
     assert!(rig.controller.path().points().is_empty());
-    rig.chord(B);
+    rig.tap(FreecamAction::AddPoint);
     rig.press_delete();
     assert_eq!(rig.controller.path().points(), &[first]);
     let second = rig.walk(10);
-    rig.chord(B);
+    rig.tap(FreecamAction::AddPoint);
     let third = rig.walk(10);
-    rig.chord(B);
+    rig.tap(FreecamAction::AddPoint);
     rig.press_delete();
     assert_eq!(rig.controller.path().points(), &[first, second, third]);
 }
@@ -550,7 +538,7 @@ fn del_key_without_selection_does_nothing() {
 fn play_with_fewer_than_two_points_does_nothing() {
     let mut rig = Rig::new();
     rig.start_sharp();
-    rig.chord(B);
+    rig.tap(FreecamAction::AddPoint);
     let here = rig.walk(5);
     let out = rig.play();
     assert_eq!(rig.controller.state(), FreecamState::On);
@@ -568,7 +556,7 @@ fn play_snaps_to_first_point_then_settles_then_moves() {
     for out in &settle {
         assert_eq!(out.camera, CameraCommand::Set(first));
         assert_eq!(out.render_override, Some(first));
-        assert!(out.block_input);
+        assert!(out.leases_wanted);
     }
     let moving = Rig::pose(&rig.frame());
     assert!(Rig::gap(moving, first) > 0.0);
@@ -621,9 +609,8 @@ fn delete_key_during_playback_changes_nothing() {
     let (first, last) = rig.build_path(40);
     rig.play();
     rig.frames(EXIT_WAIT + 5);
-    rig.chord(B);
-    assert!(rig.controller.on_key(DEL, true));
-    rig.controller.on_key(DEL, false);
+    rig.tap(FreecamAction::AddPoint);
+    rig.press_delete();
     rig.frame();
     assert_eq!(rig.controller.state(), FreecamState::Playing);
     assert_eq!(rig.controller.path().points(), &[first, last]);
@@ -654,11 +641,11 @@ fn look_input_ignored_while_playing() {
         rig.play();
         rig.frames(EXIT_WAIT + 10);
     }
-    noisy.controller.on_mouse_move(400, -300);
-    noisy.controller.on_mouse_button(4, 120);
-    noisy.controller.on_key(W, true);
+    noisy.look(400.0, -300.0);
+    noisy.wheel(1.0);
+    noisy.hold(FreecamAction::FlyForward, true);
     assert_eq!(noisy.frame().render_override, quiet.frame().render_override);
-    noisy.controller.on_key(W, false);
+    noisy.hold(FreecamAction::FlyForward, false);
     for rig in [&mut noisy, &mut quiet] {
         rig.stop();
     }
@@ -688,11 +675,11 @@ fn server_set_during_playback_hands_over() {
     rig.build_path(40);
     rig.play();
     rig.frames(EXIT_WAIT + 5);
-    rig.controller.on_server_instruction(ServerInstruction::SetOrClear);
+    rig.controller.on_server_instruction(ServerInstruction::SetOrClear, false);
     let out = rig.frame();
     assert_eq!(rig.controller.state(), FreecamState::Off);
     assert_eq!(out.camera, CameraCommand::None);
-    assert_eq!(out.gui, GuiCommand::Show);
+    assert!(!out.leases_wanted);
     assert!(rig.frames(20).iter().all(|out| out.camera == CameraCommand::None));
 }
 
@@ -769,7 +756,6 @@ fn smooth_stop_leaves_camera_still() {
     let stopped = rig.stop();
     assert_eq!(rig.controller.state(), FreecamState::On);
     assert_eq!(Rig::pose(&stopped), here);
-    rig.controller.on_key(CTRL, false);
     for out in rig.frames(5) {
         assert_eq!(Rig::pose(&out), here);
     }
@@ -783,7 +769,6 @@ fn smooth_finish_leaves_camera_still_on_last_point() {
     let outs = rig.frames(EXIT_WAIT - 1 + 60);
     assert_eq!(rig.controller.state(), FreecamState::On);
     assert_eq!(Rig::pose(&outs[outs.len() - 1]), last);
-    rig.controller.on_key(CTRL, false);
     for out in rig.frames(5) {
         assert_eq!(Rig::pose(&out), last);
     }
@@ -798,8 +783,8 @@ fn leaving_world_during_playback_turns_off_without_clear() {
     let out = rig.frame_with(|s| s.in_world = false);
     assert_eq!(rig.controller.state(), FreecamState::Off);
     assert_eq!(out.camera, CameraCommand::None);
-    assert_eq!(out.gui, GuiCommand::Show);
-    assert!(!out.block_input);
+    assert!(!out.leases_wanted);
+    assert!(!out.leases_wanted);
     assert!(rig.controller.path().points().is_empty());
     assert!(rig.frames(20).iter().all(|out| out.camera == CameraCommand::None));
 }
@@ -820,7 +805,7 @@ fn dimension_change_during_playback_exits_and_clears_path() {
         assert_eq!(out.camera, CameraCommand::None);
     }
     assert_eq!(exit[EXIT_WAIT - 1].camera, CameraCommand::Clear);
-    assert_eq!(exit[EXIT_WAIT - 1].gui, GuiCommand::Show);
+    assert!(!exit[EXIT_WAIT - 1].leases_wanted);
     assert_eq!(rig.controller.state(), FreecamState::Off);
 }
 
@@ -836,10 +821,10 @@ fn death_during_playback_waits_then_clears() {
     }
     for out in &exit[..EXIT_WAIT - 1] {
         assert_eq!(out.camera, CameraCommand::None);
-        assert!(out.block_input);
+        assert!(out.leases_wanted);
     }
     assert_eq!(exit[EXIT_WAIT - 1].camera, CameraCommand::Clear);
-    assert_eq!(exit[EXIT_WAIT - 1].gui, GuiCommand::Show);
+    assert!(!exit[EXIT_WAIT - 1].leases_wanted);
     assert_eq!(rig.controller.state(), FreecamState::Off);
 }
 
@@ -854,10 +839,10 @@ fn ctrl_p_during_playback_sends_nothing_until_the_clear() {
     for out in &exit[..EXIT_WAIT - 1] {
         assert_eq!(out.camera, CameraCommand::None);
         assert_eq!(out.render_override, None);
-        assert!(out.block_input);
+        assert!(out.leases_wanted);
     }
     assert_eq!(exit[EXIT_WAIT - 1].camera, CameraCommand::Clear);
-    assert_eq!(exit[EXIT_WAIT - 1].gui, GuiCommand::Show);
+    assert!(!exit[EXIT_WAIT - 1].leases_wanted);
 }
 
 #[test]
@@ -868,7 +853,6 @@ fn ctrl_e_turns_cursor_mode_on_and_releases_mouse() {
     let out = rig.cursor();
 
     assert!(out.cursor_mode);
-    assert_eq!(out.mouse, MouseCommand::Release);
     assert!(out.ui_visible);
 }
 
@@ -880,7 +864,6 @@ fn cursor_mode_holds_without_repeating_release() {
     let out = rig.frame();
 
     assert!(out.cursor_mode);
-    assert_eq!(out.mouse, MouseCommand::None);
 }
 
 #[test]
@@ -891,7 +874,6 @@ fn ctrl_e_again_grabs_mouse() {
     let out = rig.cursor();
 
     assert!(!out.cursor_mode);
-    assert_eq!(out.mouse, MouseCommand::Grab);
 }
 
 #[test]
@@ -901,7 +883,6 @@ fn cursor_mode_needs_freecam() {
     let out = rig.cursor();
 
     assert!(!out.cursor_mode);
-    assert_eq!(out.mouse, MouseCommand::None);
 }
 
 #[test]
@@ -910,7 +891,7 @@ fn mouse_move_in_cursor_mode_does_not_turn_camera() {
     let before = Rig::pose(&rig.start());
     rig.cursor();
 
-    rig.controller.on_mouse_move(500, 0);
+    rig.look(500.0, 0.0);
     let after = Rig::pose(&rig.frame());
 
     assert_eq!(after.yaw, before.yaw);
@@ -921,7 +902,7 @@ fn movement_while_on_is_discarded_when_it_ends() {
     let mut rig = Rig::new();
     let before = Rig::pose(&rig.start());
     rig.cursor();
-    rig.controller.on_mouse_move(500, 300);
+    rig.look(500.0, 300.0);
 
     let out = rig.cursor();
 
@@ -938,7 +919,6 @@ fn menu_ends_cursor_mode_without_grab() {
     let out = rig.frame_with(|status| status.menu_open = true);
 
     assert!(!out.cursor_mode);
-    assert_eq!(out.mouse, MouseCommand::None);
     assert!(!rig.frame().cursor_mode);
 }
 
@@ -950,19 +930,17 @@ fn focus_loss_ends_cursor_mode_without_grab() {
     let out = rig.frame_with(|status| status.focused = false);
 
     assert!(!out.cursor_mode);
-    assert_eq!(out.mouse, MouseCommand::None);
 }
 
 #[test]
 fn cursor_mode_does_not_start_while_unfocused() {
     let mut rig = Rig::new();
     rig.start();
-    rig.chord(E);
+    rig.tap(FreecamAction::ToggleBar);
 
     let out = rig.frame_with(|status| status.focused = false);
 
     assert!(!out.cursor_mode);
-    assert_eq!(out.mouse, MouseCommand::None);
 }
 
 #[test]
@@ -973,7 +951,6 @@ fn exit_grabs_mouse_when_in_play() {
     let out = rig.begin_exit();
 
     assert!(!out.cursor_mode);
-    assert_eq!(out.mouse, MouseCommand::Grab);
 }
 
 #[test]
@@ -987,7 +964,6 @@ fn leaving_world_ends_cursor_mode_without_grab() {
     });
 
     assert!(!out.cursor_mode);
-    assert_eq!(out.mouse, MouseCommand::None);
 }
 
 #[test]
@@ -1004,7 +980,6 @@ fn ctrl_e_during_playback_stops_and_keeps_bar_mode() {
     assert_eq!(rig.controller.state(), FreecamState::On);
     assert!(out.cursor_mode);
     assert!(out.ui_visible);
-    assert_eq!(out.mouse, MouseCommand::Release);
     assert_eq!(Rig::pose(&out), here);
     assert!(rig.controller.ui_snapshot().playhead > 0.0);
 }
@@ -1019,7 +994,6 @@ fn playback_start_ends_cursor_mode() {
 
     assert_eq!(rig.controller.state(), FreecamState::Playing);
     assert!(!out.cursor_mode);
-    assert_eq!(out.mouse, MouseCommand::Grab);
 }
 
 #[test]
@@ -1030,26 +1004,23 @@ fn right_drag_in_bar_mode_turns_camera() {
     let mut drag = Rig::new();
     drag.start();
     drag.cursor();
-    drag.controller.on_key(CTRL, false);
     let before = drag.frame().render_override.unwrap();
 
-    assert!(drag.right(true));
-    drag.controller.on_mouse_move(300, 0);
+    drag.right(true);
+    drag.look(300.0, 0.0);
     let grab = drag.frame();
 
-    assert_eq!(grab.mouse, MouseCommand::DragGrab);
-    assert!(grab.look_drag);
-    assert!(grab.cursor_mode);
+    assert!(!grab.cursor_mode);
+    assert!(drag.controller.ui_snapshot().cursor_mode);
     assert_eq!(Rig::pose(&grab).yaw, before.yaw);
     look.frame();
-    look.controller.on_mouse_move(200, 50);
-    drag.controller.on_mouse_move(200, 50);
+    look.look(200.0, 50.0);
+    drag.look(200.0, 50.0);
     for _ in 0..5 {
         let expected = Rig::pose(&look.frame());
         let out = drag.frame();
         assert_eq!(Rig::pose(&out), expected);
-        assert!(out.look_drag);
-        assert_eq!(out.mouse, MouseCommand::None);
+        assert!(!out.cursor_mode);
     }
     assert_ne!(Rig::pose(&look.frame()).yaw, before.yaw);
 }
@@ -1061,16 +1032,14 @@ fn right_press_over_ui_does_not_drag() {
     rig.cursor();
 
     rig.controller.set_pointer_over_ui(true);
-    assert!(rig.right(true));
+    rig.right(true);
     let out = rig.frame();
-    rig.controller.on_mouse_move(500, 0);
+    rig.look(500.0, 0.0);
     rig.controller.set_pointer_over_ui(false);
     let later = rig.frame();
 
-    assert_eq!(out.mouse, MouseCommand::None);
-    assert!(!out.look_drag);
-    assert!(!later.look_drag);
-    assert_eq!(later.mouse, MouseCommand::None);
+    assert!(out.cursor_mode);
+    assert!(later.cursor_mode);
     assert_eq!(Rig::pose(&later).yaw, before.yaw);
 }
 
@@ -1080,20 +1049,17 @@ fn drag_ends_on_release_without_jump() {
     rig.start_sharp();
     rig.cursor();
     rig.start_drag();
-    rig.controller.on_mouse_move(200, 0);
+    rig.look(200.0, 0.0);
     let turned = Rig::pose(&rig.frame());
 
     rig.right(false);
     let out = rig.frame();
-    rig.controller.on_mouse_move(500, 0);
+    rig.look(500.0, 0.0);
     let after = rig.frame();
 
-    assert_eq!(out.mouse, MouseCommand::DragRelease);
-    assert!(!out.look_drag);
     assert!(out.cursor_mode);
     assert_eq!(Rig::pose(&out).yaw, turned.yaw);
     assert_eq!(Rig::pose(&after).yaw, turned.yaw);
-    assert_eq!(after.mouse, MouseCommand::None);
 }
 
 #[test]
@@ -1107,11 +1073,8 @@ fn drag_ends_on_focus_loss_and_bar_off() {
     unfocused.right(false);
     let back = unfocused.frame();
 
-    assert!(!lost.look_drag);
     assert!(!lost.cursor_mode);
-    assert_eq!(lost.mouse, MouseCommand::None);
-    assert!(!back.look_drag);
-    assert_eq!(back.mouse, MouseCommand::Grab);
+    assert!(!back.cursor_mode);
 
     let mut bar_off = Rig::new();
     bar_off.start();
@@ -1122,13 +1085,9 @@ fn drag_ends_on_focus_loss_and_bar_off() {
     let on_again = bar_off.cursor();
     let held = bar_off.frame();
 
-    assert!(!off.look_drag);
     assert!(!off.cursor_mode);
-    assert_eq!(off.mouse, MouseCommand::Grab);
     assert!(on_again.cursor_mode);
-    assert_eq!(on_again.mouse, MouseCommand::Release);
-    assert!(!held.look_drag);
-    assert_eq!(held.mouse, MouseCommand::None);
+    assert!(held.cursor_mode);
 }
 
 #[test]
@@ -1138,8 +1097,9 @@ fn drag_ends_on_menu_playback_and_exit() {
     menu.cursor();
     menu.start_drag();
     let out = menu.frame_with(|status| status.menu_open = true);
-    assert!(!out.look_drag);
-    assert_eq!(out.mouse, MouseCommand::None);
+    assert!(!out.cursor_mode);
+    menu.frame();
+    assert!(menu.cursor().cursor_mode);
 
     let mut playback = Rig::new();
     playback.build_path(4);
@@ -1147,16 +1107,14 @@ fn drag_ends_on_menu_playback_and_exit() {
     playback.start_drag();
     let out = playback.play();
     assert_eq!(playback.controller.state(), FreecamState::Playing);
-    assert!(!out.look_drag);
-    assert_eq!(out.mouse, MouseCommand::Grab);
+    assert!(!out.cursor_mode);
 
     let mut exit = Rig::new();
     exit.start();
     exit.cursor();
     exit.start_drag();
     let out = exit.begin_exit();
-    assert!(!out.look_drag);
-    assert_eq!(out.mouse, MouseCommand::Grab);
+    assert!(!out.cursor_mode);
 }
 
 #[test]
@@ -1166,11 +1124,11 @@ fn right_press_outside_bar_mode_does_not_drag() {
 
     rig.right(true);
     let out = rig.frame();
+    let bar = rig.cursor();
     rig.right(false);
 
-    assert!(!out.look_drag);
-    assert_eq!(out.mouse, MouseCommand::None);
-    assert_eq!(rig.frame().mouse, MouseCommand::None);
+    assert!(!out.cursor_mode);
+    assert!(bar.cursor_mode);
 }
 
 #[test]
@@ -1178,15 +1136,14 @@ fn wasd_still_flies_during_drag() {
     let mut rig = Rig::new();
     let start = rig.start_sharp();
     rig.cursor();
-    rig.controller.on_key(CTRL, false);
     rig.start_drag();
 
-    rig.controller.on_key(W, true);
-    rig.controller.on_mouse_move(100, 0);
+    rig.hold(FreecamAction::FlyForward, true);
+    rig.look(100.0, 0.0);
     rig.frame();
     let out = rig.frame();
 
-    assert!(out.look_drag);
+    assert!(!out.cursor_mode);
     assert_ne!(Rig::pose(&out).position, start.position);
     assert_ne!(Rig::pose(&out).yaw, start.yaw);
 }
@@ -1260,7 +1217,6 @@ fn dimension_change_in_world_ends_cursor_mode() {
 
     assert!(matches!(rig.controller.state(), FreecamState::Exiting { .. }));
     assert!(!out.cursor_mode);
-    assert_eq!(out.mouse, MouseCommand::Grab);
 }
 
 #[test]
@@ -1272,64 +1228,18 @@ fn damage_ends_cursor_mode() {
 
     assert!(matches!(rig.controller.state(), FreecamState::Exiting { .. }));
     assert!(!out.cursor_mode);
-    assert_eq!(out.mouse, MouseCommand::Grab);
 }
 
 #[test]
 fn server_handover_ends_cursor_mode() {
     let mut rig = Rig::new();
     rig.start_with_cursor();
-    rig.controller.on_server_instruction(ServerInstruction::SetOrClear);
+    rig.controller.on_server_instruction(ServerInstruction::SetOrClear, false);
 
     let out = rig.frame();
 
     assert_eq!(rig.controller.state(), FreecamState::Off);
     assert!(!out.cursor_mode);
-    assert_eq!(out.mouse, MouseCommand::Grab);
-}
-
-#[test]
-fn focus_return_grabs_once_after_focus_loss() {
-    let mut rig = Rig::new();
-    rig.start_with_cursor();
-    assert_eq!(rig.frame_with(|status| status.focused = false).mouse, MouseCommand::None);
-    assert_eq!(rig.frame_with(|status| status.focused = false).mouse, MouseCommand::None);
-
-    assert_eq!(rig.frame().mouse, MouseCommand::Grab);
-    assert_eq!(rig.frame().mouse, MouseCommand::None);
-    assert_eq!(rig.frame().mouse, MouseCommand::None);
-}
-
-#[test]
-fn menu_after_focus_loss_cancels_pending_grab() {
-    let mut rig = Rig::new();
-    rig.start_with_cursor();
-    rig.frame_with(|status| status.focused = false);
-
-    assert_eq!(rig.frame_with(|status| status.menu_open = true).mouse, MouseCommand::None);
-
-    assert_eq!(rig.frame().mouse, MouseCommand::None);
-}
-
-#[test]
-fn leaving_the_world_after_focus_loss_cancels_pending_grab() {
-    let mut rig = Rig::new();
-    rig.start_with_cursor();
-    rig.frame_with(|status| status.focused = false);
-
-    rig.frame_with(|status| status.in_world = false);
-
-    assert_eq!(rig.frame().mouse, MouseCommand::None);
-}
-
-#[test]
-fn menu_closing_after_cursor_mode_issues_no_grab() {
-    let mut rig = Rig::new();
-    rig.start_with_cursor();
-    assert_eq!(rig.frame_with(|status| status.menu_open = true).mouse, MouseCommand::None);
-
-    assert_eq!(rig.frame().mouse, MouseCommand::None);
-    assert_eq!(rig.frame().mouse, MouseCommand::None);
 }
 
 #[test]
@@ -1340,7 +1250,7 @@ fn wheel_over_the_ui_in_cursor_mode_does_not_change_speed() {
     rig.cursor();
 
     rig.controller.set_pointer_over_ui(true);
-    assert!(rig.controller.on_mouse_button(4, 120));
+    rig.wheel(1.0);
     rig.frame();
 
     assert!(rig.controller.ui_snapshot().cursor_mode);
@@ -1355,7 +1265,7 @@ fn wheel_off_the_ui_in_cursor_mode_changes_speed() {
     rig.cursor();
 
     rig.controller.set_pointer_over_ui(false);
-    assert!(rig.controller.on_mouse_button(4, 120));
+    rig.wheel(1.0);
     rig.frame();
 
     assert!(rig.controller.ui_snapshot().cursor_mode);
@@ -1368,7 +1278,7 @@ fn wheel_outside_cursor_mode_changes_speed() {
     rig.build_path(20);
     let before = rig.controller.ui_snapshot().total_seconds;
 
-    assert!(rig.controller.on_mouse_button(4, 120));
+    rig.wheel(1.0);
     rig.frame();
 
     assert_ne!(rig.controller.ui_snapshot().total_seconds, before);
@@ -1381,7 +1291,7 @@ fn wheel_notches_over_the_ui_do_not_leak_after_cursor_mode_ends() {
     let before = rig.controller.ui_snapshot().total_seconds;
     rig.cursor();
     rig.controller.set_pointer_over_ui(true);
-    rig.controller.on_mouse_button(4, 120);
+    rig.wheel(1.0);
     rig.controller.set_pointer_over_ui(false);
 
     rig.cursor();
@@ -1522,7 +1432,7 @@ fn camera_owned_through_exit_wait_until_off() {
 fn camera_not_owned_after_forced_exit() {
     let mut rig = Rig::new();
     rig.start();
-    rig.controller.on_server_instruction(ServerInstruction::SetOrClear);
+    rig.controller.on_server_instruction(ServerInstruction::SetOrClear, false);
     assert!(!rig.frame().camera_owned);
     assert!(!rig.frame().camera_owned);
 }
@@ -1577,7 +1487,7 @@ fn markers_hide_on_freecam_off_and_each_forced_exit() {
             rig.frame_with(|status| status.dimension = 1);
         }),
         ("handover", |rig| {
-            rig.controller.on_server_instruction(ServerInstruction::SetOrClear);
+            rig.controller.on_server_instruction(ServerInstruction::SetOrClear, false);
             rig.frame();
         }),
     ];
@@ -1603,10 +1513,9 @@ fn world_rejoin_resends_markers() {
 
     // the smooth camera is still off from the first session
     rig.start();
-    rig.chord(B);
+    rig.tap(FreecamAction::AddPoint);
     rig.walk(20);
-    rig.chord(B);
-    rig.controller.on_key(CTRL, false);
+    rig.tap(FreecamAction::AddPoint);
     rig.frames(3);
 
     assert_eq!(rig.world, shown);
@@ -1674,7 +1583,7 @@ fn frames_after_the_shutdown_batch_build_no_markers() {
         rig.world.remove(&entry.id);
     }
 
-    rig.chord(B);
+    rig.tap(FreecamAction::AddPoint);
     rig.frames(3);
 
     assert_eq!(rig.controller.state(), FreecamState::On);
@@ -1686,7 +1595,7 @@ fn frames_after_the_shutdown_batch_build_no_markers() {
 fn add_point_requests_a_ray_from_the_camera() {
     let mut rig = Rig::look_at();
     let pose = rig.start_sharp();
-    rig.chord(B);
+    rig.tap(FreecamAction::AddPoint);
     let out = rig.frame();
     let expected = RayRequest { origin: pose.position, direction: pose.forward(), max_distance: 256.0 };
     assert_eq!(out.ray, Some(expected));
@@ -1698,7 +1607,7 @@ fn add_point_requests_a_ray_from_the_camera() {
 fn ray_hit_stores_target() {
     let mut rig = Rig::look_at();
     let pose = rig.start_sharp();
-    rig.chord(B);
+    rig.tap(FreecamAction::AddPoint);
     rig.frame();
     let target = Vec3::new(4.0, 60.0, 12.0);
     rig.controller.on_ray_result(Some(target));
@@ -1711,7 +1620,7 @@ fn ray_hit_stores_target() {
 fn ray_miss_stores_plain_key() {
     let mut rig = Rig::look_at();
     let pose = rig.start_sharp();
-    rig.chord(B);
+    rig.tap(FreecamAction::AddPoint);
     rig.frame();
     rig.controller.on_ray_result(None);
     assert_eq!(rig.controller.path().keys(), &[PathKey::new(pose, None)]);
@@ -1723,7 +1632,7 @@ fn ray_miss_stores_plain_key() {
 fn no_answer_in_two_frames_stores_plain_key() {
     let mut rig = Rig::look_at();
     let pose = rig.start_sharp();
-    rig.chord(B);
+    rig.tap(FreecamAction::AddPoint);
     assert!(rig.frame().ray.is_some());
     rig.frame();
     assert!(rig.controller.path().keys().is_empty());
@@ -1738,7 +1647,7 @@ fn no_answer_in_two_frames_stores_plain_key() {
 fn look_at_disabled_adds_plain_key_at_once() {
     let mut rig = Rig::new();
     let pose = rig.start_sharp();
-    rig.chord(B);
+    rig.tap(FreecamAction::AddPoint);
     assert_eq!(rig.controller.path().keys(), &[PathKey::new(pose, None)]);
     assert_eq!(rig.frame().ray, None);
 }
@@ -1747,11 +1656,11 @@ fn look_at_disabled_adds_plain_key_at_once() {
 fn play_right_after_add_point_keeps_the_new_key() {
     let mut rig = Rig::look_at();
     let first = rig.start_sharp();
-    rig.chord(B);
+    rig.tap(FreecamAction::AddPoint);
     rig.frame();
     rig.controller.on_ray_result(None);
     let last = rig.walk(20);
-    rig.chord(B);
+    rig.tap(FreecamAction::AddPoint);
     rig.play();
     assert_eq!(rig.controller.state(), FreecamState::Playing);
     assert_eq!(rig.controller.path().points(), &[first, last]);
@@ -1765,10 +1674,9 @@ fn playback_waits_for_marker_removal_before_moving() {
     let mut rig = Rig::with_config(config);
     let first = rig.start_sharp();
     for _ in 0..256 {
-        rig.chord(B);
+        rig.tap(FreecamAction::AddPoint);
         rig.walk(2);
     }
-    rig.controller.on_key(CTRL, false);
     for _ in 0..1000 {
         rig.frame();
         if rig.last_batch_size() == 0 {
@@ -1888,7 +1796,7 @@ fn ctrl_b_inserts_at_the_playhead() {
     rig.cursor();
     let new = rig.walk(4);
 
-    rig.chord(B);
+    rig.tap(FreecamAction::AddPoint);
 
     assert_eq!(rig.controller.path().points(), &[p0, new, p1, p2]);
     assert_eq!(rig.controller.ui_snapshot().playhead, rig.point_distance(1));
@@ -1914,16 +1822,15 @@ fn select_moves_playhead_and_camera() {
 fn select_uses_look_at_aim() {
     let mut rig = Rig::look_at();
     let first = rig.start_sharp();
-    rig.chord(B);
+    rig.tap(FreecamAction::AddPoint);
     rig.frame();
     // 30 degrees off the key's own view, inside the angle where the aim is trusted
     let target = first.position + CameraPose::new(first.position, first.yaw - 30.0, first.pitch).forward() * 12.0;
     rig.controller.on_ray_result(Some(target));
     rig.walk(20);
-    rig.chord(B);
+    rig.tap(FreecamAction::AddPoint);
     rig.frame();
     rig.controller.on_ray_result(None);
-    rig.controller.on_key(CTRL, false);
     rig.bar_on();
     rig.walk(10);
     let aim = (target - first.position).normalized();
@@ -1986,15 +1893,14 @@ fn replace_changes_only_selected_key() {
     let first = rig.start_sharp();
     let mut keys = vec![first];
     for _ in 0..2 {
-        rig.chord(B);
+        rig.tap(FreecamAction::AddPoint);
         rig.frame();
         rig.controller.on_ray_result(None);
         keys.push(rig.walk(20));
     }
-    rig.chord(B);
+    rig.tap(FreecamAction::AddPoint);
     rig.frame();
     rig.controller.on_ray_result(None);
-    rig.controller.on_key(CTRL, false);
     rig.bar_on();
     rig.click(UiAction::SelectPoint(1));
     let here = rig.walk(6);
@@ -2105,7 +2011,6 @@ fn bar_hidden_while_playing_and_back_after() {
     let back = back.unwrap();
     assert!(back.ui_visible);
     assert!(back.cursor_mode);
-    assert_eq!(back.mouse, MouseCommand::Release);
     assert!(!rig.controller.ui_snapshot().playing);
 }
 
@@ -2157,7 +2062,7 @@ fn bar_off_after_select_keeps_pose() {
     let mut rig = Rig::new();
     let (first, _) = rig.build_smooth_path(20);
     // the camera turns away from the key yaw, so a look goal that was not reset would differ from it
-    rig.controller.on_mouse_move(TURN, 0);
+    rig.look(TURN as f32, 0.0);
     rig.frames(40);
     rig.bar_on();
     rig.walk(10);
@@ -2166,9 +2071,8 @@ fn bar_off_after_select_keeps_pose() {
 
     let selected = Rig::pose(&rig.click(UiAction::SelectPoint(0)));
     let off = rig.cursor();
-    rig.controller.on_key(CTRL, false);
     let still = rig.frames(5);
-    rig.controller.on_mouse_move(LOOK, 0);
+    rig.look(LOOK as f32, 0.0);
     let looked = rig.frames(60);
 
     assert_eq!(selected, first);
@@ -2206,12 +2110,11 @@ fn selection_and_playhead_clamp_after_clear_and_world_change() {
     assert_eq!(cleared.playhead, 0.0);
     assert_eq!(cleared.length, 0.0);
 
-    rig.chord(B);
+    rig.tap(FreecamAction::AddPoint);
     rig.walk(20);
-    rig.chord(B);
+    rig.tap(FreecamAction::AddPoint);
     rig.walk(20);
-    rig.chord(B);
-    rig.controller.on_key(CTRL, false);
+    rig.tap(FreecamAction::AddPoint);
     rig.click(UiAction::SelectPoint(2));
     assert_eq!(rig.controller.ui_snapshot().selection, Some(2));
 
@@ -2254,21 +2157,6 @@ fn bar_actions_need_bar_mode() {
     assert_eq!(rig.controller.state(), FreecamState::On);
     assert_eq!(rig.controller.path().points(), &points);
     assert_eq!(rig.controller.ui_snapshot().selection, None);
-}
-
-#[test]
-fn ctrl_enter_does_nothing() {
-    let mut rig = Rig::new();
-    rig.build_path(20);
-    let here = Rig::pose(&rig.frame());
-
-    rig.chord(ENTER);
-    let outs = rig.frames(5);
-
-    assert_eq!(rig.controller.state(), FreecamState::On);
-    for out in outs {
-        assert_eq!(Rig::pose(&out), here);
-    }
 }
 
 #[test]
@@ -2340,4 +2228,231 @@ fn path_change_rebuild_time_reaches_telemetry() {
 
     assert!(changed.path_rebuild_us_max > 0.0, "{changed:?}");
     assert_eq!(quiet.path_rebuild_us_max, 0.0);
+}
+
+#[test]
+fn toggle_keybind_requests_start_and_granted_starts() {
+    let mut rig = Rig::new();
+    rig.controller
+        .on_link_event(&ModEvent::Keybind { action: FreecamAction::Toggle.index(), phase: KeybindPhase::Pressed });
+
+    assert!(rig.controller.take_start_request());
+    assert!(!rig.controller.take_start_request());
+    rig.controller.finish_start(StartLeases::Granted);
+    let out = rig.frame();
+
+    assert_eq!(rig.controller.state(), FreecamState::On);
+    assert!(matches!(out.camera, CameraCommand::Set(_)));
+    assert!(out.leases_wanted);
+}
+
+#[test]
+fn denied_start_stays_off_and_sends_nothing() {
+    let mut rig = Rig::new();
+    rig.controller
+        .on_link_event(&ModEvent::Keybind { action: FreecamAction::Toggle.index(), phase: KeybindPhase::Pressed });
+    assert!(rig.controller.take_start_request());
+
+    rig.controller.finish_start(StartLeases::Denied(Capability::Camera));
+    let outs = rig.frames(3);
+
+    assert_eq!(rig.controller.state(), FreecamState::Off);
+    for out in outs {
+        assert_eq!(out.camera, CameraCommand::None);
+        assert!(!out.leases_wanted);
+    }
+}
+
+#[test]
+fn toggle_while_on_starts_the_exit_without_a_start_request() {
+    let mut rig = Rig::new();
+    rig.start();
+
+    rig.controller
+        .on_link_event(&ModEvent::Keybind { action: FreecamAction::Toggle.index(), phase: KeybindPhase::Pressed });
+
+    assert!(!rig.controller.take_start_request());
+    rig.frame();
+    assert!(matches!(rig.controller.state(), FreecamState::Exiting { .. }));
+}
+
+#[test]
+fn fly_keybind_holds_until_released() {
+    let mut rig = Rig::new();
+    let start = rig.start_sharp();
+
+    rig.hold(FreecamAction::FlyForward, true);
+    let a = Rig::pose(&rig.frame());
+    let b = Rig::pose(&rig.frame());
+    rig.hold(FreecamAction::FlyForward, false);
+    let c = Rig::pose(&rig.frame());
+    let d = Rig::pose(&rig.frame());
+
+    assert_ne!(a.position, start.position);
+    assert_ne!(b.position, a.position);
+    assert_eq!(c.position, d.position);
+}
+
+#[test]
+fn fly_keybind_repeat_changes_nothing() {
+    let mut rig = Rig::new();
+    let start = rig.start_sharp();
+
+    rig.keybind(FreecamAction::FlyForward, KeybindPhase::Repeat);
+    let out = rig.frame();
+
+    assert_eq!(Rig::pose(&out).position, start.position);
+}
+
+#[test]
+fn focus_loss_clears_held_flight_keys() {
+    let mut rig = Rig::new();
+    rig.start_sharp();
+    rig.hold(FreecamAction::FlyForward, true);
+    rig.frame();
+
+    rig.frame_with(|status| status.focused = false);
+    let a = Rig::pose(&rig.frame());
+    let b = Rig::pose(&rig.frame());
+
+    assert_eq!(a.position, b.position);
+}
+
+#[test]
+fn camera_suspended_in_bar_mode_exits_and_drops_cursor() {
+    let mut rig = Rig::new();
+    rig.start_with_cursor();
+    rig.hold(FreecamAction::FlyForward, true);
+
+    rig.event(ModEvent::Suspended { capability: Capability::Camera, by: ModIndex(1) });
+    let mut exit = vec![rig.frame()];
+    exit.extend(rig.frames(EXIT_WAIT - 1));
+
+    assert!(matches!(exit[0].camera, CameraCommand::None));
+    assert!(!exit[0].cursor_mode);
+    assert!(exit.iter().all(|out| !matches!(out.camera, CameraCommand::Set(_))));
+    let last = exit[EXIT_WAIT - 1];
+    assert_eq!(last.camera, CameraCommand::Clear);
+    assert!(!last.leases_wanted);
+    assert_eq!(rig.controller.state(), FreecamState::Off);
+}
+
+#[test]
+fn input_revoked_exits() {
+    let mut rig = Rig::new();
+    rig.start();
+
+    rig.event(ModEvent::Revoked { capability: Capability::Input, by: ModIndex(2) });
+    rig.frame();
+
+    assert!(matches!(rig.controller.state(), FreecamState::Exiting { .. }));
+}
+
+#[test]
+fn suspended_hud_does_not_exit() {
+    let mut rig = Rig::new();
+    rig.start();
+
+    rig.event(ModEvent::Suspended { capability: Capability::Hud, by: ModIndex(1) });
+    rig.frame();
+
+    assert_eq!(rig.controller.state(), FreecamState::On);
+}
+
+#[test]
+fn disabled_event_goes_off_at_once() {
+    let mut rig = Rig::new();
+    rig.start_with_cursor();
+
+    rig.event(ModEvent::Disabled);
+    let out = rig.frame();
+
+    assert_eq!(rig.controller.state(), FreecamState::Off);
+    assert_eq!(out.camera, CameraCommand::Clear);
+    assert!(!out.cursor_mode);
+    assert!(!out.leases_wanted);
+}
+
+#[test]
+fn pointer_delta_turns_the_camera_in_fly_mode_only() {
+    let mut rig = Rig::new();
+    let before = Rig::pose(&rig.start());
+
+    rig.look(200.0, 0.0);
+    let turned = Rig::pose(&rig.frames(30)[29]);
+    rig.cursor();
+    rig.look(200.0, 0.0);
+    let bar = rig.frames(30);
+
+    assert_ne!(turned.yaw, before.yaw);
+    assert_eq!(Rig::pose(&bar[29]).yaw, Rig::pose(&bar[0]).yaw);
+}
+
+#[test]
+fn server_instruction_from_other_mod_is_ignored() {
+    let mut rig = Rig::new();
+    rig.start();
+
+    rig.controller.on_server_instruction(ServerInstruction::SetOrClear, true);
+    rig.frame();
+
+    assert_eq!(rig.controller.state(), FreecamState::On);
+}
+
+#[test]
+fn apply_config_changes_speed_and_legend_live() {
+    let mut rig = Rig::new();
+    rig.start();
+    let config = FreecamConfig {
+        motion: MotionConfig { max_speed: 4.0, ..MotionConfig::default() },
+        keys: KeyConfig { toggle: "Ctrl+Shift+F10".to_owned(), ..KeyConfig::default() },
+        ..Rig::config(false)
+    };
+
+    rig.controller.apply_config(config);
+
+    let exit_row = rig.controller.legend().rows.iter().find(|row| row.label == "exit freecam").unwrap();
+    assert_eq!(exit_row.key, "Ctrl+Shift+F10");
+    assert_eq!(rig.controller.ui_snapshot().speed, 4.0);
+    assert_eq!(rig.controller.state(), FreecamState::On);
+}
+
+#[test]
+fn exit_sends_no_clear_while_another_mod_holds_the_camera() {
+    let mut rig = Rig::new();
+    rig.start();
+
+    rig.event(ModEvent::Suspended { capability: Capability::Camera, by: ModIndex(1) });
+    let exit: Vec<FrameOutput> =
+        (0..EXIT_WAIT + 2).map(|_| rig.frame_with(|s| s.camera_held_by_other = true)).collect();
+
+    assert!(exit.iter().all(|out| out.camera == CameraCommand::None), "{exit:?}");
+    assert_eq!(rig.controller.state(), FreecamState::Off);
+    assert!(!exit[EXIT_WAIT + 1].leases_wanted);
+}
+
+#[test]
+fn apply_config_sets_a_changed_start_speed_and_smooth_flag() {
+    let mut rig = Rig::new();
+    let config = FreecamConfig {
+        motion: MotionConfig { start_speed: 12.0, smooth_at_start: false, ..MotionConfig::default() },
+        ..Rig::config(false)
+    };
+
+    rig.controller.apply_config(config.clone());
+    let start = rig.start();
+    rig.hold(FreecamAction::FlyForward, true);
+    let first = rig.frame();
+
+    assert_eq!(rig.controller.ui_snapshot().speed, 12.0);
+    // smooth off: the first held frame already moves at the full speed
+    let moved = (Rig::pose(&first).position - Rig::pose(&start).position).length();
+    assert!((moved - 12.0 * FRAME_STEP as f32).abs() < 1e-3, "{moved}");
+
+    // the same config again leaves a wheel change alone
+    rig.wheel(1.0);
+    rig.frame();
+    let wheeled = rig.controller.ui_snapshot().speed;
+    rig.controller.apply_config(config);
+    assert_eq!(rig.controller.ui_snapshot().speed, wheeled);
 }

@@ -1,53 +1,43 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use amm_client::test_support::FakeTable;
+use amm_core::structs::event::{KeybindPhase, ModEvent};
+use freecam_core::structs::FreecamAction;
 use freecam_ffi::api::frame::fc_frame;
-use freecam_ffi::api::input::fc_key;
-use freecam_ffi::api::lifecycle::{fc_create, fc_destroy};
+use freecam_ffi::api::lifecycle::fc_destroy;
 use freecam_ffi::services::FcHandle;
-use freecam_ffi::types::{FcFrameOutput, FcFrameStatus, FcMarkerEntry, FcPose, FcStatus, FcStr, FcVec3};
+use freecam_ffi::types::{FcFrameOutput, FcFrameStatus, FcMarkerEntry, FcPose, FcStatus, FcVec3};
 
-// a live handle created from a config path that does not exist, destroyed on drop
+// a live handle registered with this thread's fake mod manager, destroyed on drop
 pub struct FfiSession {
     pub handle: *mut FcHandle,
 }
 
 impl FfiSession {
-    pub const CTRL: u32 = 0x11;
-    pub const P: u32 = 0x50;
-    pub const E: u32 = 0x45;
-    pub const B: u32 = 0x42;
-    pub const W: u32 = 0x57;
     pub const FRAME_STEP: f64 = 0.05;
-    pub const NO_LOOK_AT: &str = r#"{"lookAt":{"enabled":false}}"#;
+    pub const NO_LOOK_AT: &str = "look_at { enabled = false }";
 
     pub fn new() -> Self {
-        let dir = tempfile::tempdir().unwrap();
-        Self::create(&dir.path().join("absent.json"))
+        Self::with_config("")
     }
 
-    // a live handle created from a config file holding `json`
-    pub fn with_config(json: &str) -> Self {
-        let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("config.json");
-        std::fs::write(&file, json).unwrap();
-        Self::create(&file)
+    // a live handle whose config.hcl, as the fake manager hands it over, is `hcl`
+    pub fn with_config(hcl: &str) -> Self {
+        FakeTable::set_config(hcl);
+        let handle = FcHandle::create(FakeTable::table(), Path::new(FakeTable::CONFIG_DIR)).unwrap();
+        Self { handle: Box::into_raw(Box::new(handle)) }
     }
 
-    fn create(file: &Path) -> Self {
-        let text = file.to_str().unwrap();
-        let path = FcStr { ptr: text.as_ptr(), len: text.len() };
-        let handle = fc_create(&path, None);
-        assert!(!handle.is_null());
-        Self { handle }
+    // queues the manager's keybind event for the next fc_frame
+    pub fn keybind(action: FreecamAction, phase: KeybindPhase) {
+        FakeTable::push_event(ModEvent::Keybind { action: action.index(), phase });
     }
 
-    // presses and releases the modifier chord with `code`, then releases the modifier
-    pub fn chord(&self, code: u32) {
-        let mut consume = 0u8;
-        for (key, down) in [(Self::CTRL, 1), (code, 1), (code, 0), (Self::CTRL, 0)] {
-            assert_eq!(fc_key(self.handle, key, down, &mut consume), FcStatus::Ok);
-        }
+    // presses and releases the keybind
+    pub fn tap(action: FreecamAction) {
+        Self::keybind(action, KeybindPhase::Pressed);
+        Self::keybind(action, KeybindPhase::Released);
     }
 
     pub fn start_pose() -> FcPose {
@@ -73,7 +63,7 @@ impl FfiSession {
 
     // the live handle behind the raw pointer, for the behavioural accessors
     pub fn handle(&self) -> &FcHandle {
-        // SAFETY: the pointer came from fc_create, was checked non-null, and lives until drop
+        // SAFETY: the pointer came from Box::into_raw over a created handle, and lives until drop
         unsafe { &*self.handle }
     }
 
@@ -124,17 +114,16 @@ impl FfiSession {
             assert_eq!(code, FcStatus::Ok);
             Self::apply(world, &Self::batch(&out));
         };
-        self.chord(Self::P);
+        Self::tap(FreecamAction::Toggle);
         step(time, &mut world);
-        self.chord(Self::B);
-        let mut consume = 0u8;
-        assert_eq!(fc_key(self.handle, Self::W, 1, &mut consume), FcStatus::Ok);
+        Self::tap(FreecamAction::AddPoint);
+        Self::keybind(FreecamAction::FlyForward, KeybindPhase::Pressed);
         for _ in 0..20 {
             time += Self::FRAME_STEP;
             step(time, &mut world);
         }
-        assert_eq!(fc_key(self.handle, Self::W, 0, &mut consume), FcStatus::Ok);
-        self.chord(Self::B);
+        Self::keybind(FreecamAction::FlyForward, KeybindPhase::Released);
+        Self::tap(FreecamAction::AddPoint);
         (time, world)
     }
 }

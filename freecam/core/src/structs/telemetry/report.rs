@@ -39,4 +39,10 @@ pub struct TelemetryReport {
     // look-at ray requests over the window that got an answer, and that ran out of time
     pub look_at_rays_answered: u32,
     pub look_at_rays_timed_out: u32,
+    // milliseconds from a flight key-down to the first frame that rendered the camera somewhere new, over the
+    // window's samples; 0 without samples
+    pub key_to_move_ms_p50: f32,
+    pub key_to_move_ms_p99: f32,
+    pub key_to_move_ms_max: f32,
+    pub key_to_move_samples: u32,
 }

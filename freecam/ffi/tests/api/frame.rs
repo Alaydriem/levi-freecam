@@ -1,8 +1,15 @@
+use amm_client::test_support::FakeTable;
+use amm_core::structs::event::ModEvent;
 use freecam_core::services::marker_sync::MARKER_ID_BASE;
 use freecam_core::structs::{CameraPose, Vec3};
 use freecam_ffi::api::frame::fc_frame;
-use freecam_ffi::api::input::fc_key;
+use stats_alloc::Region;
+
+use crate::GLOBAL;
+use freecam_core::structs::FreecamAction;
+use freecam_ffi::api::input::fc_server_instruction;
 use freecam_ffi::api::markers::fc_ray_result;
+use freecam_ffi::services::LinkSession;
 use freecam_ffi::types::{FcFrameOutput, FcStatus, FcVec3};
 
 use crate::support::FfiSession;
@@ -24,35 +31,18 @@ fn null_out_pointers_are_invalid_argument() {
 }
 
 #[test]
-fn ctrl_p_then_frame_outputs_set() {
+fn toggle_then_frame_outputs_set_and_takes_the_flight_leases() {
     let session = FfiSession::new();
-    let mut consume = 0u8;
-    assert_eq!(fc_key(session.handle, 0x11, 1, &mut consume), FcStatus::Ok);
-    assert_eq!(fc_key(session.handle, 0x50, 1, &mut consume), FcStatus::Ok);
+    FfiSession::tap(FreecamAction::Toggle);
     let status = FfiSession::ready_status();
+
     let (code, out) = session.frame(&status);
+
     assert_eq!(code, FcStatus::Ok);
     assert_eq!(out.camera, 1);
-    assert_eq!(out.gui, 1);
-    assert_eq!(out.block_input, 1);
+    assert_eq!(out.camera_owned, 1);
     assert_eq!(out.pose, status.start_pose);
-}
-
-#[test]
-fn frame_output_carries_mouse_and_cursor_mode() {
-    let session = FfiSession::new();
-    let status = FfiSession::ready_status();
-    session.chord(FfiSession::P);
-    let (_, started) = session.frame(&status);
-    assert_eq!((started.ui_visible, started.cursor_mode, started.mouse), (1, 0, 0));
-
-    session.chord(FfiSession::E);
-    let (code, out) = session.frame(&status);
-
-    assert_eq!(code, FcStatus::Ok);
-    assert_eq!(out.mouse, 1);
-    assert_eq!(out.cursor_mode, 1);
-    assert_eq!(out.ui_visible, 1);
+    assert_eq!(FakeTable::with(|state| state.acquired.clone()), LinkSession::FLIGHT);
 }
 
 #[test]
@@ -65,9 +55,7 @@ fn marker_batch_pointer_stays_readable_until_next_frame() {
     let first = FfiSession::batch(&out);
 
     // calls to other exports leave the batch alone
-    let mut consume = 0u8;
-    assert_eq!(fc_key(session.handle, FfiSession::W, 1, &mut consume), FcStatus::Ok);
-    assert_eq!(fc_key(session.handle, FfiSession::W, 0, &mut consume), FcStatus::Ok);
+    assert_eq!(fc_server_instruction(session.handle, 0), FcStatus::Ok);
     assert_eq!(fc_ray_result(session.handle, 0, 0.0, 0.0, 0.0), FcStatus::Ok);
 
     assert_eq!(FfiSession::batch(&out), first);
@@ -92,12 +80,12 @@ fn markers_wait_for_a_captured_handler() {
 #[test]
 fn ray_request_crosses_when_core_asks() {
     let session = FfiSession::new();
-    session.chord(FfiSession::P);
+    FfiSession::tap(FreecamAction::Toggle);
     session.frame(&FfiSession::status_at(0.05, 1));
     let (_, quiet) = session.frame(&FfiSession::status_at(0.10, 1));
     assert_eq!(quiet.ray.active, 0);
 
-    session.chord(FfiSession::B);
+    FfiSession::tap(FreecamAction::AddPoint);
     let (code, out) = session.frame(&FfiSession::status_at(0.15, 1));
     assert_eq!(code, FcStatus::Ok);
     let start = FfiSession::start_pose();
@@ -109,4 +97,31 @@ fn ray_request_crosses_when_core_asks() {
 
     let (_, next) = session.frame(&FfiSession::status_at(0.20, 1));
     assert_eq!(next.ray.active, 0);
+}
+
+#[test]
+fn frame_does_not_allocate_after_warm_up() {
+    let session = FfiSession::with_config(FfiSession::NO_LOOK_AT);
+    FfiSession::tap(FreecamAction::Toggle);
+    let mut time = 0.0;
+    let mut frame = |events: usize| {
+        for _ in 0..events {
+            FakeTable::push_event(ModEvent::PointerDelta { dx: 1.0, dy: 0.5 });
+        }
+        time += FfiSession::FRAME_STEP;
+        let (code, _) = session.frame(&FfiSession::status_at(time, 1));
+        assert_eq!(code, FcStatus::Ok);
+    };
+    // the fake manager's queue grows to its size here, so the measured frames reuse it
+    frame(LinkSession::DRAIN_LIMIT);
+    for _ in 0..30 {
+        frame(4);
+    }
+
+    let region = Region::new(&GLOBAL);
+    for _ in 0..100 {
+        frame(4);
+    }
+
+    assert_eq!(region.change().allocations, 0);
 }

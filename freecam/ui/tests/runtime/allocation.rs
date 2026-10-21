@@ -6,23 +6,16 @@ use crate::support::ui_fixture::UiFixture;
 const WARM_UP_FRAMES: usize = 10;
 const MEASURED_FRAMES: usize = 200;
 
-fn capacities(fixture: &UiFixture) -> [usize; 3] {
-    [fixture.out.vertices.capacity(), fixture.out.indices.capacity(), fixture.out.draws.capacity()]
-}
-
-#[test]
-fn output_buffers_stop_growing_after_warm_up() {
-    let mut fixture = UiFixture::new().cursor_mode();
+// allocations per frame of the views alone, after the warm-up; the mod manager tessellates and copies
+fn allocations_per_frame(fixture: &mut UiFixture) -> usize {
     for _ in 0..WARM_UP_FRAMES {
-        fixture.frame(&[]);
+        fixture.run();
     }
-    let warm = capacities(&fixture);
-
+    let region = Region::new(&GLOBAL);
     for _ in 0..MEASURED_FRAMES {
-        fixture.frame(&[]);
+        fixture.run();
     }
-
-    assert_eq!(capacities(&fixture), warm);
+    region.change().allocations / MEASURED_FRAMES
 }
 
 #[test]
@@ -36,36 +29,21 @@ fn report_egui_allocations_per_frame() {
     for (name, mut fixture) in scenes {
         fixture.snapshot.visible = name != "hidden";
         for _ in 0..WARM_UP_FRAMES {
-            fixture.frame(&[]);
+            fixture.run();
         }
         let region = Region::new(&GLOBAL);
-        let mut frames = 0;
         for _ in 0..MEASURED_FRAMES {
-            fixture.frame(&[]);
-            frames += 1;
+            fixture.run();
         }
         let change = region.change();
-        let per_frame = |count: usize| count as f64 / frames as f64;
+        let per_frame = |count: usize| count as f64 / MEASURED_FRAMES as f64;
         println!(
-            "{name}: {:.1} allocations, {:.1} reallocations, {:.0} bytes allocated per frame over {frames} frames",
+            "{name}: {:.1} allocations, {:.1} reallocations, {:.0} bytes allocated per frame over {MEASURED_FRAMES} frames",
             per_frame(change.allocations),
             per_frame(change.reallocations),
             per_frame(change.bytes_allocated),
         );
-        assert_eq!(frames, MEASURED_FRAMES);
     }
-}
-
-// allocations per frame over the measured frames, after the warm-up
-fn allocations_per_frame(fixture: &mut UiFixture) -> usize {
-    for _ in 0..WARM_UP_FRAMES {
-        fixture.frame(&[]);
-    }
-    let region = Region::new(&GLOBAL);
-    for _ in 0..MEASURED_FRAMES {
-        fixture.frame(&[]);
-    }
-    region.change().allocations / MEASURED_FRAMES
 }
 
 #[test]

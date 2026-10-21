@@ -5,15 +5,26 @@ on:
     tags: ['v*']
 
 env:
-  MISE_TRUSTED_CONFIG_PATHS: ${{ github.workspace }}
+  MISE_TRUSTED_CONFIG_PATHS: ${{ github.workspace }}/levi-freecam
 
 jobs:
   release:
     runs-on: windows-latest
     permissions:
       contents: write
+    defaults:
+      run:
+        working-directory: levi-freecam
     steps:
+      # the path dependencies name ../levi-crates, so both repos sit side by side under the workspace
       - uses: actions/checkout@v7
+        with:
+          path: levi-freecam
+
+      - uses: actions/checkout@v7
+        with:
+          repository: alaydriem/levi-crates
+          path: levi-crates
 
       - name: Check that every version matches the tag
         shell: pwsh
@@ -30,6 +41,8 @@ jobs:
           "VERSION=$tag" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - uses: jdx/mise-action@v2
+        with:
+          working_directory: levi-freecam
 
       - uses: taiki-e/install-action@nextest
 
@@ -42,7 +55,7 @@ jobs:
         with:
           path: |
             ~/AppData/Local/.xmake
-          key: xmake-${{ hashFiles('shim/xmake.lua') }}
+          key: xmake-${{ hashFiles('levi-freecam/shim/xmake.lua') }}
           restore-keys: |
             xmake-
 
@@ -63,4 +76,4 @@ jobs:
 
       - uses: softprops/action-gh-release@v3
         with:
-          files: dist/*.zip
+          files: levi-freecam/dist/*.zip

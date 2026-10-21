@@ -1,18 +1,20 @@
-//! Headless UI bench: runs the UI for a fixed number of frames with a fixed snapshot and prints the cost of each phase.
+//! Headless UI bench: runs the freecam views for a fixed number of frames with a fixed snapshot, as the mod manager
+//! runs the Overlay layer, and prints the cost of the pass (freecam's work) and of the tessellation (the manager's).
 //!
 //! `mise run bench-ui`. A dev tool, never loaded by the game, so it prints to stdout.
 
 use std::time::{Duration, Instant};
 
+use egui::{Context, Pos2, RawInput, Rect, vec2};
 use freecam_core::config::KeyConfig;
-use freecam_core::structs::{UiFrameInput, UiFrameOutput, UiLegend, UiSnapshot};
-use freecam_ui::runtime::UiRuntime;
+use freecam_core::structs::{UiAction, UiLegend, UiSnapshot};
+use freecam_ui::runtime::FreecamUi;
+use studio_ui::theme::{FontSource, StudioTheme};
 
 struct Bench;
 
 impl Bench {
     const FRAMES: usize = 600;
-    const MAX_VERTICES: usize = 65536;
 
     const SCENES: [usize; 2] = [5, 256];
     const POINT_SPACING: f32 = 4.0;
@@ -28,6 +30,7 @@ impl Bench {
         let mut snapshot = UiSnapshot {
             visible: true,
             cursor_mode: true,
+            can_screenshot: true,
             point_count: points as u32,
             length: (points - 1) as f32 * Self::POINT_SPACING,
             playhead: 2.0,
@@ -43,61 +46,66 @@ impl Bench {
         snapshot
     }
 
+    fn input(time: f64) -> RawInput {
+        let mut input = RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1920.0, 1080.0))),
+            time: Some(time),
+            ..Default::default()
+        };
+        input.viewports.entry(input.viewport_id).or_default().native_pixels_per_point = Some(1.0);
+        input
+    }
+
     fn scene(points: usize) {
-        let mut runtime = UiRuntime::new(Self::MAX_VERTICES);
-        runtime.set_profiling(true);
+        let ctx = Context::default();
+        StudioTheme::install(&ctx, FontSource::Embedded);
+        let mut ui = FreecamUi::new();
         let snapshot = Self::snapshot(points);
         let legend = UiLegend::new(&KeyConfig::default());
-        let mut input =
-            UiFrameInput { screen_width: 1920.0, screen_height: 1080.0, pixels_per_point: 1.0, time_seconds: 0.0 };
-        let mut out = UiFrameOutput::new();
+        let mut actions: Vec<UiAction> = Vec::with_capacity(16);
 
-        let mut total = Vec::with_capacity(Self::FRAMES);
         let mut run = Vec::with_capacity(Self::FRAMES);
         let mut tessellate = Vec::with_capacity(Self::FRAMES);
-        let mut copy = Vec::with_capacity(Self::FRAMES);
         let mut first = Duration::ZERO;
+        let mut vertices = 0;
         for frame in 0..Self::FRAMES {
-            input.time_seconds += 1.0 / 60.0;
             let started = Instant::now();
-            runtime.run(&input, &snapshot, &legend, &mut std::iter::empty(), &mut out);
-            let elapsed = started.elapsed();
+            let mut output = ctx.run_pass(Self::input(frame as f64 / 60.0), |ctx| {
+                actions.clear();
+                ui.show(ctx, &snapshot, &legend, &mut actions);
+            });
+            let ran = Instant::now();
+            output.textures_delta.clear();
+            let primitives = ctx.tessellate(output.shapes, output.pixels_per_point);
+            let tessellated = Instant::now();
             if frame == 0 {
-                first = elapsed;
+                first = tessellated - started;
                 continue;
             }
-            let profile = runtime.profile();
-            total.push(elapsed);
-            run.push(profile.run);
-            tessellate.push(profile.tessellate);
-            copy.push(profile.copy);
+            vertices = primitives
+                .iter()
+                .map(|primitive| match &primitive.primitive {
+                    egui::epaint::Primitive::Mesh(mesh) => mesh.vertices.len(),
+                    egui::epaint::Primitive::Callback(_) => 0,
+                })
+                .sum();
+            run.push(ran - started);
+            tessellate.push(tessellated - ran);
         }
 
         println!("ui_bench: {} frames at 1920x1080, strip + legend + bar with {points} points", Self::FRAMES);
-        println!("first frame (fonts, atlas upload): {:.3} ms", Self::ms(first));
-        println!(
-            "last frame: {} vertices, {} indices, {} draws",
-            out.vertices.len(),
-            out.indices.len(),
-            out.draws.len()
-        );
-        println!("phase          avg ms    p95 ms   (frames 2..{})", Self::FRAMES);
-        for (name, samples) in
-            [("run", &mut run), ("tessellate", &mut tessellate), ("copy", &mut copy), ("total", &mut total)]
-        {
-            let (avg, p95) = Self::stats(samples);
-            println!("{name:<12} {avg:>8.4}  {p95:>8.4}");
-        }
+        println!("first frame (fonts, atlas): {:.3} ms", Self::ms(first));
+        println!("last frame: {vertices} vertices");
+        println!("phase                    avg ms    p95 ms   (frames 2..{})", Self::FRAMES);
+        Self::row("run (freecam)", &mut run);
+        Self::row("tessellate (manager)", &mut tessellate);
     }
 
-    fn stats(samples: &mut [Duration]) -> (f64, f64) {
-        if samples.is_empty() {
-            return (0.0, 0.0);
-        }
+    fn row(name: &str, samples: &mut [Duration]) {
         samples.sort_unstable();
-        let avg = samples.iter().map(|sample| Self::ms(*sample)).sum::<f64>() / samples.len() as f64;
-        let index = ((samples.len() as f64 * 0.95).ceil() as usize).saturating_sub(1).min(samples.len() - 1);
-        (avg, Self::ms(samples[index]))
+        let average = samples.iter().sum::<Duration>() / samples.len().max(1) as u32;
+        let p95 = samples.get(samples.len() * 95 / 100).copied().unwrap_or_default();
+        println!("{name:<22} {:>8.4}  {:>8.4}", Self::ms(average), Self::ms(p95));
     }
 
     fn ms(duration: Duration) -> f64 {

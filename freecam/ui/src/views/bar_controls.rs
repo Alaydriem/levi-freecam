@@ -4,8 +4,10 @@ use egui::{Align2, Color32, CursorIcon, Pos2, Rect, Sense, Stroke, Ui, pos2, vec
 use freecam_core::structs::{UiAction, UiSnapshot};
 
 use super::{BarLayout, BarText, Timecode};
-use crate::theme::{Icon, Metrics, Palette, Typeface};
-use crate::widgets::{ButtonKind, ButtonState, Draw, IconButton, Motion, TextButton};
+use crate::theme::{FreecamIcon, FreecamPalette};
+use crate::widgets::{BarDraw, ButtonKind, ButtonState, IconButton, TextButton};
+use studio_ui::theme::{Icon, Metrics, StudioPalette, Typeface};
+use studio_ui::widgets::{Draw, Motion};
 
 /// The bar's buttons and read-outs around the scrubber.
 pub struct BarControls;
@@ -22,7 +24,7 @@ impl BarControls {
         text: &mut BarText,
         actions: &mut Vec<UiAction>,
     ) {
-        if IconButton::new(Icon::PREVIOUS, "rewind", 15.0).show(ui, layout.rewind).clicked() {
+        if IconButton::new(FreecamIcon::PREVIOUS, "rewind", 15.0).show(ui, layout.rewind).clicked() {
             actions.push(UiAction::Rewind);
         }
         if Self::play_button(ui, layout.play) {
@@ -37,12 +39,12 @@ impl BarControls {
         let rect = layout.speed;
         let radius = (rect.height() * 0.5) as u8;
         let cy = rect.center().y;
-        Draw::fill(painter, rect, radius, Palette::alpha(Palette::BG_FIELD, 0.9));
-        Draw::outline(painter, rect, radius, 1.0, Palette::LINE_STRONG);
-        Draw::caps(painter, pos2(rect.left() + 12.0, cy), Align2::LEFT_CENTER, "SPEED", Palette::TEXT_FAINT);
+        Draw::fill(painter, rect, radius, StudioPalette::alpha(StudioPalette::BG_FIELD, 0.9));
+        Draw::outline(painter, rect, radius, 1.0, StudioPalette::LINE_STRONG);
+        BarDraw::caps(painter, pos2(rect.left() + 12.0, cy), Align2::LEFT_CENTER, "SPEED", StudioPalette::TEXT_FAINT);
         let generation = text.generation();
         let value = text.speed.galley(painter, generation, |out| write!(out, "{:.1} b/s", snapshot.speed));
-        Draw::place_tinted(painter, value, pos2(rect.right() - 12.0, cy), Align2::RIGHT_CENTER, Palette::TEXT);
+        BarDraw::place_tinted(painter, value, pos2(rect.right() - 12.0, cy), Align2::RIGHT_CENTER, StudioPalette::TEXT);
     }
 
     /// Clear points, Add point and the point count, shown with no selection.
@@ -59,7 +61,7 @@ impl BarControls {
             (_, true) => ButtonState::Armed,
             (_, false) => ButtonState::Normal,
         };
-        let clear = IconButton::with_state(Icon::CLEAR, "clear-points", 15.0, state).show(ui, layout.clear);
+        let clear = IconButton::with_state(FreecamIcon::CLEAR, "clear-points", 15.0, state).show(ui, layout.clear);
         if clear.clicked() {
             actions.push(UiAction::ClearPoints);
         }
@@ -81,23 +83,28 @@ impl BarControls {
             1 => out.write_str("1 point"),
             count => write!(out, "{count} points"),
         });
-        Draw::place_tinted(painter, count, pos2(layout.count_x, cy - 8.0), Align2::LEFT_CENTER, Palette::TEXT);
+        BarDraw::place_tinted(painter, count, pos2(layout.count_x, cy - 8.0), Align2::LEFT_CENTER, StudioPalette::TEXT);
         let hint_pos = pos2(layout.count_x, cy + 10.0);
-        Draw::text(
+        BarDraw::text(
             painter,
             hint_pos,
             Align2::LEFT_CENTER,
             "Adds at the playhead",
             Typeface::ui(12.5),
-            Palette::TEXT_FAINT,
+            StudioPalette::TEXT_FAINT,
         );
     }
 
     /// "Point N", Re-place and Delete, shown with a selection.
     pub fn selected(ui: &mut Ui, layout: &BarLayout, index: usize, text: &mut BarText, actions: &mut Vec<UiAction>) {
         Self::point_tag(ui, layout.tag, index, text);
-        let replace =
-            TextButton::styled("Re-place", "replace", ButtonState::Normal, ButtonKind::Secondary, Some(Icon::REFRESH));
+        let replace = TextButton::styled(
+            "Re-place",
+            "replace",
+            ButtonState::Normal,
+            ButtonKind::Secondary,
+            Some(FreecamIcon::REFRESH),
+        );
         if replace.show(ui, layout.replace).clicked() {
             actions.push(UiAction::Replace);
         }
@@ -116,14 +123,17 @@ impl BarControls {
         let painter = ui.painter();
         let center = rect.center();
         let radius = rect.width() * 0.5;
-        let glow = Palette::alpha(Palette::ACCENT, 0.28 + 0.12 * hover);
-        Draw::glow(painter, center + vec2(0.0, 1.0), radius + 2.0 + hover * 2.0, glow);
-        let fill =
-            Palette::mix(Palette::mix(Palette::ACCENT, Palette::ACCENT_HOVER, hover), Palette::ACCENT_PRESS, press);
+        let glow = StudioPalette::alpha(StudioPalette::ACCENT, 0.28 + 0.12 * hover);
+        BarDraw::glow(painter, center + vec2(0.0, 1.0), radius + 2.0 + hover * 2.0, glow);
+        let fill = StudioPalette::mix(
+            StudioPalette::mix(StudioPalette::ACCENT, StudioPalette::ACCENT_HOVER, hover),
+            StudioPalette::ACCENT_PRESS,
+            press,
+        );
         painter.circle_filled(center, radius - press * 0.8, fill);
         painter.circle_stroke(center, radius - 0.5, Stroke::new(1.0, Color32::from_white_alpha(22)));
         // the play triangle reads as centred one point right of the true centre
-        Draw::icon(painter, center + vec2(1.0, 0.0), Icon::PLAY, 16.0, Palette::WHITE);
+        Draw::icon(painter, center + vec2(1.0, 0.0), FreecamIcon::PLAY, 16.0, StudioPalette::WHITE);
         response.clicked()
     }
 
@@ -136,38 +146,38 @@ impl BarControls {
             out.write_str(" / ")?;
             Timecode::write_short(out, snapshot.total_seconds)
         });
-        let main_rect = Draw::place_tinted(painter, main, left_center, Align2::LEFT_CENTER, Palette::TEXT);
+        let main_rect = BarDraw::place_tinted(painter, main, left_center, Align2::LEFT_CENTER, StudioPalette::TEXT);
         let total_pos = pos2(main_rect.right() + 1.0, main_rect.bottom() - 3.0);
-        Draw::place_tinted(painter, total, total_pos, Align2::LEFT_BOTTOM, Palette::TEXT_DIM);
+        BarDraw::place_tinted(painter, total, total_pos, Align2::LEFT_BOTTOM, StudioPalette::TEXT_DIM);
     }
 
     fn point_tag(ui: &Ui, rect: Rect, index: usize, text: &mut BarText) {
         let painter = ui.painter();
         let cy = rect.center().y;
         let radius = Metrics::RADIUS_CONTROL;
-        Draw::fill(painter, rect, radius, Palette::alpha(Palette::POINT_SELECTED, 0.12));
-        Draw::outline(painter, rect, radius, 1.0, Palette::alpha(Palette::POINT_SELECTED, 0.45));
-        Draw::diamond(
+        Draw::fill(painter, rect, radius, StudioPalette::alpha(FreecamPalette::POINT_SELECTED, 0.12));
+        Draw::outline(painter, rect, radius, 1.0, StudioPalette::alpha(FreecamPalette::POINT_SELECTED, 0.45));
+        BarDraw::diamond(
             painter,
             pos2(rect.left() + 18.0, cy),
             5.0,
-            Palette::POINT_SELECTED,
-            Stroke::new(1.0, Palette::BG_APP),
+            FreecamPalette::POINT_SELECTED,
+            Stroke::new(1.0, StudioPalette::BG_APP),
         );
         let generation = text.generation();
         let tag = text.tag.galley(painter, generation, |out| write!(out, "Point {}", index + 1));
-        Draw::place_tinted(painter, tag, pos2(rect.left() + 30.0, cy), Align2::LEFT_CENTER, Palette::TEXT);
+        BarDraw::place_tinted(painter, tag, pos2(rect.left() + 30.0, cy), Align2::LEFT_CENTER, StudioPalette::TEXT);
     }
 
     // a small label centred above `anchor`, with a gap
     fn tip(ui: &Ui, anchor: Pos2, text: &str) {
         let painter = ui.painter();
-        let galley = Draw::galley(painter, text, Typeface::ui(12.5), Palette::TEXT);
+        let galley = BarDraw::galley(painter, text, Typeface::ui(12.5), StudioPalette::TEXT);
         let size = galley.size() + vec2(16.0, 8.0);
         let rect = Rect::from_min_size(pos2(anchor.x - size.x * 0.5, anchor.y - 12.0 - size.y), size);
-        Draw::shadow(painter, rect, Metrics::RADIUS_CONTROL, 8.0, vec2(0.0, 2.0), Palette::SHADOW);
-        Draw::fill(painter, rect, Metrics::RADIUS_CONTROL, Palette::BG_RAISED);
-        Draw::outline(painter, rect, Metrics::RADIUS_CONTROL, 1.0, Palette::LINE_STRONG);
+        Draw::shadow(painter, rect, Metrics::RADIUS_CONTROL, 8.0, vec2(0.0, 2.0), StudioPalette::SHADOW);
+        Draw::fill(painter, rect, Metrics::RADIUS_CONTROL, StudioPalette::BG_RAISED);
+        Draw::outline(painter, rect, Metrics::RADIUS_CONTROL, 1.0, StudioPalette::LINE_STRONG);
         Draw::place(painter, galley, rect.center(), Align2::CENTER_CENTER);
     }
 }

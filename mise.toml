@@ -1,7 +1,13 @@
 [tasks.preflight]
-description = "Names a missing Rust toolchain or cargo-nextest before a build turns it into an obscure error"
+description = "Names a missing levi-crates checkout, Rust toolchain or cargo-nextest before a build turns it into an obscure error"
 dir = "{{config_root}}"
-run = ["rustc --version", "cargo --version", "cargo nextest --version"]
+shell = "bash -c"
+run = [
+  "test -f ../levi-crates/Cargo.toml || { echo 'levi-crates not found at ../levi-crates (path dependencies need it next to this repo)'; exit 1; }",
+  "rustc --version",
+  "cargo --version",
+  "cargo nextest --version",
+]
 
 [tasks.check]
 description = "cargo check, clippy with warnings denied, and rustfmt check over the workspace"
@@ -9,7 +15,8 @@ dir = "{{config_root}}"
 run = [
   "cargo check --workspace --all-targets",
   "cargo clippy --workspace --all-targets -- -D warnings",
-  "cargo fmt --all --check",
+  # only this workspace's crates: --all would also check the levi-crates path dependencies
+  "cargo fmt -p freecam-core -p freecam-ffi -p freecam-ui --check",
 ]
 
 [tasks.test]
@@ -18,7 +25,7 @@ dir = "{{config_root}}"
 run = "cargo nextest run --workspace"
 
 [tasks.bench-ui]
-description = "Runs the headless UI bench (600 frames, fixed snapshot) and prints run, tessellate and copy times"
+description = "Runs the headless UI bench (600 frames, fixed snapshot) and prints the views pass and tessellate times"
 dir = "{{config_root}}"
 run = "cargo run --release -p freecam-ui --example ui_bench"
 

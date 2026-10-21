@@ -1,4 +1,5 @@
 #include "network/ClientPacketHandler.h"
+#include "bridge/ModLog.h"
 
 #include "mod/FreecamMod.h"
 
@@ -55,7 +56,7 @@ void ClientPacketHandler::capture(ClientNetworkHandler* handler, NetworkIdentifi
     if (state.handler != handler) {
         ++state.captures;
         state.thread = static_cast<uint32_t>(GetCurrentThreadId());
-        FreecamMod::getInstance().getSelf().getLogger().info(
+        ModLog::info(
             "captured client packet handler: generation {} on thread {}",
             state.captures,
             state.thread

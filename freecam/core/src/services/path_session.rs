@@ -1,7 +1,5 @@
 use std::time::Instant;
 
-use log::info;
-
 use crate::services::path_player::EASE_RAMP_SECONDS;
 use crate::services::path_store::PATH_CAPACITY;
 use crate::services::{LookAtAim, PathCurve, PathPlayer, PathStore};
@@ -42,6 +40,10 @@ impl PathSession {
         }
     }
 
+    pub fn set_pitch_limit(&mut self, pitch_limit: f32) {
+        self.pitch_limit = pitch_limit.abs();
+    }
+
     pub fn keys(&self) -> &[PathKey] {
         self.store.keys()
     }
@@ -63,7 +65,7 @@ impl PathSession {
     // puts the key at `index`, or at the end when the index is past it; false when the path is full
     pub fn insert(&mut self, index: usize, key: PathKey) -> bool {
         if !self.store.insert_at(index, key) {
-            info!("freecam path full at {PATH_CAPACITY} points");
+            curia::info!("freecam path full", { capacity: PATH_CAPACITY });
             return false;
         }
         self.rebuild_curve();
@@ -119,7 +121,7 @@ impl PathSession {
             return;
         }
         if !self.store.is_empty() {
-            info!("freecam path cleared: {}", if left { "left the world" } else { "dimension change" });
+            curia::info!("freecam path cleared", { reason: if left { "left the world" } else { "dimension change" } });
         }
         self.player.stop();
         self.store.clear();
@@ -139,7 +141,7 @@ impl PathSession {
     // path has too few points to play
     pub fn start(&mut self, speed: f32, from: f32) -> bool {
         if self.store.len() < MIN_PLAY_POINTS {
-            info!("freecam play needs {MIN_PLAY_POINTS} points, the path has {}", self.store.len());
+            curia::info!("freecam play needs more points", { needed: MIN_PLAY_POINTS, points: self.store.len() });
             return false;
         }
         self.player.start(self.curve.length(), speed, self.settle_frames, from);

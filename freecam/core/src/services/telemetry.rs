@@ -46,9 +46,17 @@ pub struct SmoothnessTelemetry {
     path_rebuild_us_max: f32,
     look_at_rays_answered: u32,
     look_at_rays_timed_out: u32,
+    // the time of the first flight key-down not yet followed by a camera move
+    key_probe: Option<f64>,
+    // key-to-move times of the open window in milliseconds; when full, the oldest is overwritten
+    key_samples: [f32; Self::KEY_PROBE_CAPACITY],
+    key_sample_count: usize,
+    key_sample_next: usize,
 }
 
 impl SmoothnessTelemetry {
+    pub const KEY_PROBE_CAPACITY: usize = 128;
+
     pub fn new(enabled: bool) -> Self {
         Self {
             enabled,
@@ -85,6 +93,10 @@ impl SmoothnessTelemetry {
             path_rebuild_us_max: 0.0,
             look_at_rays_answered: 0,
             look_at_rays_timed_out: 0,
+            key_probe: None,
+            key_samples: [0.0; Self::KEY_PROBE_CAPACITY],
+            key_sample_count: 0,
+            key_sample_next: 0,
         }
     }
 
@@ -102,6 +114,7 @@ impl SmoothnessTelemetry {
         self.min_dt = self.min_dt.min(dt);
         self.max_dt = self.max_dt.max(dt);
         self.sets += u32::from(sent_set);
+        self.close_key_probe(status);
         self.record_step(dt, status.rendered_position, velocity);
         self.record_camera(status);
         if let Some(game_forward) = status.game_camera_forward {
@@ -174,6 +187,15 @@ impl SmoothnessTelemetry {
         }
     }
 
+    // a flight key went down at `time_seconds`, on the clock of `FrameStatus::time_seconds`; a probe still open
+    // keeps its earlier stamp
+    pub fn record_key_probe(&mut self, time_seconds: f64) {
+        if !self.enabled || !time_seconds.is_finite() {
+            return;
+        }
+        self.key_probe.get_or_insert(time_seconds);
+    }
+
     pub fn take_report(&mut self) -> Option<TelemetryReport> {
         self.report.take()
     }
@@ -209,6 +231,38 @@ impl SmoothnessTelemetry {
         self.previous_speed = Some(speed);
     }
 
+    // the first frame whose rendered position differs from the last one closes the open probe
+    fn close_key_probe(&mut self, status: &FrameStatus) {
+        let (Some(stamp), Some(now)) = (self.key_probe, status.rendered_position) else {
+            return;
+        };
+        if self.previous_rendered == Some(now) {
+            return;
+        }
+        self.key_probe = None;
+        let ms = ((status.time_seconds - stamp) * 1000.0) as f32;
+        if !ms.is_finite() || ms < 0.0 {
+            return;
+        }
+        self.key_samples[self.key_sample_next] = ms;
+        self.key_sample_next = (self.key_sample_next + 1) % Self::KEY_PROBE_CAPACITY;
+        self.key_sample_count = (self.key_sample_count + 1).min(Self::KEY_PROBE_CAPACITY);
+    }
+
+    // p50, p99 and max of the window's key-to-move samples, all 0 without samples
+    fn key_percentiles(&self) -> (f32, f32, f32) {
+        if self.key_sample_count == 0 {
+            return (0.0, 0.0, 0.0);
+        }
+        let mut sorted = [0.0_f32; Self::KEY_PROBE_CAPACITY];
+        let samples = &mut sorted[..self.key_sample_count];
+        samples.copy_from_slice(&self.key_samples[..self.key_sample_count]);
+        samples.sort_unstable_by(f32::total_cmp);
+        let last = samples.len() - 1;
+        let at = |fraction: f32| samples[((last as f32) * fraction).round() as usize];
+        (at(0.5), at(0.99), samples[last])
+    }
+
     fn record_camera(&mut self, status: &FrameStatus) {
         if status.game_camera_position.is_some() && status.game_camera_position != self.previous_camera {
             self.camera_updates += 1;
@@ -221,6 +275,7 @@ impl SmoothnessTelemetry {
     }
 
     fn build_report(&self) -> TelemetryReport {
+        let (key_to_move_ms_p50, key_to_move_ms_p99, key_to_move_ms_max) = self.key_percentiles();
         let (step_ratio_min, step_ratio_max) =
             if self.step_samples > 0 { (self.step_ratio_min, self.step_ratio_max) } else { (1.0, 1.0) };
         TelemetryReport {
@@ -250,6 +305,10 @@ impl SmoothnessTelemetry {
             path_rebuild_us_max: self.path_rebuild_us_max,
             look_at_rays_answered: self.look_at_rays_answered,
             look_at_rays_timed_out: self.look_at_rays_timed_out,
+            key_to_move_ms_p50,
+            key_to_move_ms_p99,
+            key_to_move_ms_max,
+            key_to_move_samples: u32::try_from(self.key_sample_count).unwrap_or(u32::MAX),
         }
     }
 
@@ -282,5 +341,7 @@ impl SmoothnessTelemetry {
         self.path_rebuild_us_max = 0.0;
         self.look_at_rays_answered = 0;
         self.look_at_rays_timed_out = 0;
+        self.key_sample_count = 0;
+        self.key_sample_next = 0;
     }
 }

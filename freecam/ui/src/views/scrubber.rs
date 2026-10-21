@@ -2,8 +2,10 @@ use egui::{Align2, Color32, CursorIcon, Rect, Sense, Stroke, Ui, pos2, vec2};
 use freecam_core::structs::{UiAction, UiSnapshot};
 
 use super::{BarText, Timecode};
-use crate::theme::Palette;
-use crate::widgets::{Draw, Motion};
+use crate::theme::FreecamPalette;
+use crate::widgets::BarDraw;
+use studio_ui::theme::StudioPalette;
+use studio_ui::widgets::{Draw, Motion};
 
 /// The scrubber: point marks on a line and the playhead. A drag or a click on the line scrubs; a click on a mark
 /// selects that point.
@@ -66,10 +68,15 @@ impl Scrubber {
             pos2(track.left(), cy - Self::TRACK_H * 0.5),
             pos2(track.right(), cy + Self::TRACK_H * 0.5),
         );
-        Draw::fill(painter, line, 2, Palette::alpha(Palette::LINE_STRONG, 0.95));
+        Draw::fill(painter, line, 2, StudioPalette::alpha(StudioPalette::LINE_STRONG, 0.95));
         let played = Rect::from_min_max(line.min, pos2(playhead_x, line.max.y));
         if played.width() > 0.5 {
-            Draw::hgradient(painter, played, Palette::alpha(Palette::ACCENT, 0.55), Palette::ACCENT);
+            BarDraw::hgradient(
+                painter,
+                played,
+                StudioPalette::alpha(StudioPalette::ACCENT, 0.55),
+                StudioPalette::ACCENT,
+            );
         }
     }
 
@@ -98,25 +105,25 @@ impl Scrubber {
             let lit = Motion::flag(ui.ctx(), id.with("lit"), highlighted == Some(index));
             let painter = ui.painter();
             if selected {
-                Draw::glow(painter, pos2(x, cy), 12.0, Palette::alpha(Palette::POINT_SELECTED, 0.45));
+                BarDraw::glow(painter, pos2(x, cy), 12.0, StudioPalette::alpha(FreecamPalette::POINT_SELECTED, 0.45));
                 painter.circle_stroke(
                     pos2(x, cy),
                     11.0,
-                    Stroke::new(1.5, Palette::alpha(Palette::POINT_SELECTED, 0.9)),
+                    Stroke::new(1.5, StudioPalette::alpha(FreecamPalette::POINT_SELECTED, 0.9)),
                 );
             }
             let half = Self::MARK_HALF + hover * 1.5 + if selected { 1.5 } else { 0.0 };
-            let fill = Palette::mix(Palette::POINT, Palette::POINT_SELECTED, lit);
-            Draw::diamond(painter, pos2(x, cy), half, fill, Stroke::new(1.5, Palette::BG_APP));
+            let fill = StudioPalette::mix(FreecamPalette::POINT, FreecamPalette::POINT_SELECTED, lit);
+            BarDraw::diamond(painter, pos2(x, cy), half, fill, Stroke::new(1.5, StudioPalette::BG_APP));
             if selected || x - last_label >= Self::LABEL_GAP {
                 last_label = x;
                 let color = if selected {
-                    Palette::POINT_SELECTED
+                    FreecamPalette::POINT_SELECTED
                 } else {
-                    Palette::mix(Palette::TEXT_FAINT, Palette::TEXT_DIM, hover)
+                    StudioPalette::mix(StudioPalette::TEXT_FAINT, StudioPalette::TEXT_DIM, hover)
                 };
                 let label = text.labels.galley(painter, generation, index);
-                Draw::place_tinted(painter, label, pos2(x, cy + 11.0), Align2::CENTER_TOP, color);
+                BarDraw::place_tinted(painter, label, pos2(x, cy + 11.0), Align2::CENTER_TOP, color);
             }
         }
     }
@@ -125,12 +132,12 @@ impl Scrubber {
         let amount = Motion::flag(ui.ctx(), ui.scope_id().with("scrub-active"), scrubbing);
         let painter = ui.painter();
         let reach = 13.0 + amount * 3.0;
-        painter.line_segment([pos2(x, cy - reach), pos2(x, cy + reach)], Stroke::new(2.0, Palette::PLAYHEAD));
+        painter.line_segment([pos2(x, cy - reach), pos2(x, cy + reach)], Stroke::new(2.0, FreecamPalette::PLAYHEAD));
         if amount > 0.0 {
-            Draw::glow(painter, pos2(x, cy), 14.0, Palette::alpha(Palette::PLAYHEAD, 0.35 * amount));
+            BarDraw::glow(painter, pos2(x, cy), 14.0, StudioPalette::alpha(FreecamPalette::PLAYHEAD, 0.35 * amount));
         }
         let knob = 5.5 + amount * 2.0;
-        painter.circle_filled(pos2(x, cy), knob, Palette::PLAYHEAD);
+        painter.circle_filled(pos2(x, cy), knob, FreecamPalette::PLAYHEAD);
         painter.circle_stroke(pos2(x, cy), knob, Stroke::new(1.5, Color32::from_white_alpha(200)));
     }
 
@@ -139,8 +146,8 @@ impl Scrubber {
         let galley = text.tip.galley(painter, text.generation(), |out| Timecode::write_short(out, seconds));
         let width = galley.size().x + 16.0;
         let rect = Rect::from_min_size(pos2(x - width * 0.5, bottom - 22.0), vec2(width, 22.0));
-        Draw::shadow(painter, rect, 6, 8.0, vec2(0.0, 2.0), Palette::SHADOW);
-        Draw::fill(painter, rect, 6, Palette::PLAYHEAD);
-        Draw::place_tinted(painter, galley, rect.center(), Align2::CENTER_CENTER, Palette::WHITE);
+        Draw::shadow(painter, rect, 6, 8.0, vec2(0.0, 2.0), StudioPalette::SHADOW);
+        Draw::fill(painter, rect, 6, FreecamPalette::PLAYHEAD);
+        BarDraw::place_tinted(painter, galley, rect.center(), Align2::CENTER_CENTER, StudioPalette::WHITE);
     }
 }

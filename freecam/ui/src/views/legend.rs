@@ -4,8 +4,9 @@ use egui::{Align2, Galley, Rect, Ui, pos2, vec2};
 use freecam_core::structs::UiLegend;
 
 use super::Strip;
-use crate::theme::{Metrics, Palette, Typeface};
-use crate::widgets::Draw;
+use crate::widgets::BarDraw;
+use studio_ui::theme::{Metrics, StudioPalette, Typeface};
+use studio_ui::widgets::Draw;
 
 /// The key legend under the strip: one key cap and one label per row.
 pub struct Legend;
@@ -47,9 +48,9 @@ impl Legend {
         let mut galleys: [Option<(Arc<Galley>, Arc<Galley>)>; Self::MAX_ROWS] = Default::default();
         let (mut key_w, mut label_w) = (0.0_f32, 0.0_f32);
         for (slot, (index, row)) in galleys.iter_mut().zip(shown) {
-            let key = Draw::galley(painter, row.key.as_str(), Typeface::mono(Self::KEY_SIZE), Palette::TEXT);
+            let key = BarDraw::galley(painter, row.key.as_str(), Typeface::mono(Self::KEY_SIZE), StudioPalette::TEXT);
             let label = legend.label(index, cursor_mode);
-            let label = Draw::galley(painter, label, Typeface::ui(Self::LABEL_SIZE), Palette::TEXT_DIM);
+            let label = BarDraw::galley(painter, label, Typeface::ui(Self::LABEL_SIZE), StudioPalette::TEXT_DIM);
             key_w = key_w.max(key.size().x);
             label_w = label_w.max(label.size().x);
             *slot = Some((key, label));
@@ -62,8 +63,8 @@ impl Legend {
         for (index, (key, label)) in galleys.into_iter().flatten().enumerate() {
             let y = rect.top() + Self::PAD + index as f32 * Self::ROW;
             let cap = Rect::from_min_size(pos2(rect.left() + Self::PAD, y), vec2(key_w, Self::CAP_HEIGHT));
-            Draw::fill(painter, cap, Metrics::RADIUS_SMALL, Palette::alpha(Palette::BG_FIELD, 0.9));
-            Draw::outline(painter, cap, Metrics::RADIUS_SMALL, 1.0, Palette::LINE_STRONG);
+            Draw::fill(painter, cap, Metrics::RADIUS_SMALL, StudioPalette::alpha(StudioPalette::BG_FIELD, 0.9));
+            Draw::outline(painter, cap, Metrics::RADIUS_SMALL, 1.0, StudioPalette::LINE_STRONG);
             Draw::place(painter, key, cap.center(), Align2::CENTER_CENTER);
             let label_pos = pos2(cap.right() + Self::LABEL_GAP, cap.center().y);
             Draw::place(painter, label, label_pos, Align2::LEFT_CENTER);

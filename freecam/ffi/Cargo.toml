@@ -10,13 +10,20 @@ autotests = false
 crate-type = ["staticlib", "rlib"]
 
 [dependencies]
-crossbeam-queue.workspace = true
+amm-abi.workspace = true
+amm-client.workspace = true
+amm-core = { workspace = true, features = ["egui"] }
+chrono.workspace = true
+curia.workspace = true
+egui.workspace = true
 freecam-core.workspace = true
 freecam-ui.workspace = true
-log.workspace = true
 
 [dev-dependencies]
-egui.workspace = true
+studio-ui.workspace = true
+amm-client = { workspace = true, features = ["test-support"] }
+hcl-rs.workspace = true
+stats_alloc.workspace = true
 tempfile.workspace = true
 
 [[test]]

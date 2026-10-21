@@ -320,6 +320,82 @@ fn frames_without_a_rendered_position_still_give_step_samples() {
     assert!(uneven.step_ratio_min < 0.7, "{}", uneven.step_ratio_min);
 }
 
+// short frames, so many probes fit in one window
+const PROBE_DT: f32 = 0.001;
+
+// one frame at `time_seconds` with the camera rendered at `z`
+fn probe_frame(telemetry: &mut SmoothnessTelemetry, time_seconds: f64, z: f32) -> Option<TelemetryReport> {
+    let status = FrameStatus { rendered_position: Some(Vec3::new(0.0, 0.0, z)), ..Frames::status(time_seconds) };
+    telemetry.record(PROBE_DT, &status, true, Vec3::default(), Vec3::new(0.0, 0.0, 1.0));
+    telemetry.take_report()
+}
+
+// runs frames that do not move the camera until the window closes and returns its report
+fn close_window(telemetry: &mut SmoothnessTelemetry, time_seconds: f64, z: f32) -> TelemetryReport {
+    (0..2100).find_map(|frame| probe_frame(telemetry, time_seconds + frame as f64 * 0.001, z)).unwrap()
+}
+
+#[test]
+fn key_probe_measures_time_to_first_pose_change() {
+    let mut telemetry = SmoothnessTelemetry::new(true);
+    probe_frame(&mut telemetry, 0.996, 0.0);
+    telemetry.record_key_probe(1.000);
+    probe_frame(&mut telemetry, 1.004, 0.0);
+    probe_frame(&mut telemetry, 1.008, 0.0);
+    probe_frame(&mut telemetry, 1.012, 0.5);
+
+    let report = close_window(&mut telemetry, 1.016, 0.5);
+
+    assert_eq!(report.key_to_move_samples, 1);
+    assert!((report.key_to_move_ms_max - 12.0).abs() < 0.01, "{}", report.key_to_move_ms_max);
+    assert!((report.key_to_move_ms_p50 - 12.0).abs() < 0.01, "{}", report.key_to_move_ms_p50);
+}
+
+#[test]
+fn second_probe_before_move_keeps_the_first_stamp() {
+    let mut telemetry = SmoothnessTelemetry::new(true);
+    probe_frame(&mut telemetry, 0.996, 0.0);
+    telemetry.record_key_probe(1.000);
+    telemetry.record_key_probe(1.005);
+    probe_frame(&mut telemetry, 1.010, 0.5);
+
+    let report = close_window(&mut telemetry, 1.014, 0.5);
+
+    assert_eq!(report.key_to_move_samples, 1);
+    assert!((report.key_to_move_ms_max - 10.0).abs() < 0.01, "{}", report.key_to_move_ms_max);
+}
+
+#[test]
+fn key_probe_samples_are_bounded() {
+    let mut telemetry = SmoothnessTelemetry::new(true);
+    let mut time = 0.0;
+    let mut z = 0.0;
+    probe_frame(&mut telemetry, time, z);
+    // the first 172 moves take 50 ms, the last 128 take 4 ms, all inside one window
+    for pair in 0..300 {
+        let latency = if pair < 172 { 0.050 } else { 0.004 };
+        telemetry.record_key_probe(time);
+        time += latency;
+        z += 1.0;
+        assert!(probe_frame(&mut telemetry, time, z).is_none());
+    }
+
+    let report = close_window(&mut telemetry, time + 0.001, z);
+
+    assert_eq!(report.key_to_move_samples as usize, SmoothnessTelemetry::KEY_PROBE_CAPACITY);
+    assert!((report.key_to_move_ms_max - 4.0).abs() < 0.01, "{}", report.key_to_move_ms_max);
+}
+
+#[test]
+fn key_probe_report_is_zero_without_samples() {
+    let mut telemetry = SmoothnessTelemetry::new(true);
+
+    let report = close_window(&mut telemetry, 0.0, 0.0);
+
+    assert_eq!(report.key_to_move_samples, 0);
+    assert_eq!(report.key_to_move_ms_max, 0.0);
+}
+
 #[test]
 fn path_rebuild_time_is_the_window_max_and_resets() {
     let mut telemetry = SmoothnessTelemetry::new(true);

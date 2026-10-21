@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 const DEFAULT_FOLDER: &str = r"%USERPROFILE%\Pictures\Screenshots";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
+#[serde(default)]
 pub struct ScreenshotConfig {
     // save folder; environment variables are expanded and the folder is created by the shim
     pub folder: String,

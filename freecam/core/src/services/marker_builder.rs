@@ -1,5 +1,3 @@
-use log::{info, warn};
-
 use crate::config::MarkerConfig;
 use crate::services::PathCurve;
 use crate::structs::math::Vec3;
@@ -89,37 +87,34 @@ impl MarkerBuilder {
         if fixed(weight) + dashes + arrows > max && weight > 1 {
             weight = 1;
             self.reductions += 1;
-            Self::log_if(log, format_args!("freecam markers: line weight 1 to fit {max} shapes"));
+            if log {
+                curia::info!("freecam markers: line weight 1 to fit the shape budget", { max: max });
+            }
         }
         if fixed(weight) + dashes + arrows > max {
             self.reductions += 1;
             let room = max.saturating_sub(fixed(weight) + arrows);
             dashes = room;
-            Self::log_if(
-                log,
-                format_args!("freecam markers: curve dashes {full_dashes} cut to {room} to fit {max} shapes"),
-            );
+            if log {
+                curia::info!("freecam markers: curve dashes cut to fit the shape budget", { dashes: full_dashes, kept: room, max: max });
+            }
             if room < segments.min(full_dashes) {
                 self.reductions += 1;
                 arrows = 0;
                 dashes = max.saturating_sub(fixed(weight)).min(full_dashes);
-                Self::log_if(log, format_args!("freecam markers: arrows dropped to fit {max} shapes"));
+                if log {
+                    curia::info!("freecam markers: arrows dropped to fit the shape budget", { max: max });
+                }
             }
         }
         let needed = fixed(weight) + dashes + arrows;
         if log && needed > max {
-            warn!("freecam markers: {needed} shapes needed, only {max} drawn");
+            curia::warn!("freecam markers: more shapes needed than drawn", { needed: needed, max: max });
         }
         if self.reductions > 0 {
             self.logged_path = Some(path);
         }
         (weight, dashes, arrows > 0)
-    }
-
-    fn log_if(log: bool, message: std::fmt::Arguments) {
-        if log {
-            info!("{message}");
-        }
     }
 
     fn full_dash_count(segments: usize, length: f32) -> usize {

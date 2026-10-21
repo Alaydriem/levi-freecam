@@ -6,7 +6,7 @@ const DEFAULT_MAX_FRAME_DT: f32 = 0.1;
 const MAX_FRAME_DT_CEILING: f32 = 1.0;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
+#[serde(default)]
 pub struct MotionConfig {
     pub start_speed: f32,
     pub min_speed: f32,

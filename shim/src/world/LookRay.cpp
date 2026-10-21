@@ -1,4 +1,5 @@
 #include "world/LookRay.h"
+#include "bridge/ModLog.h"
 
 #include "mod/FreecamMod.h"
 #include "network/ClientPacketHandler.h"
@@ -38,7 +39,7 @@ bool onHandlerThread() {
     uint32_t current       = static_cast<uint32_t>(GetCurrentThreadId());
     if (handlerThread == current) return true;
     if (!g_threadMismatchLogged.exchange(true)) {
-        FreecamMod::getInstance().getSelf().getLogger().warn(
+        ModLog::warn(
             "look ray: thread {} differs from the packet handler thread {}; every ray is a miss",
             current,
             handlerThread

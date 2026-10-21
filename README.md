@@ -212,10 +212,9 @@ No. Freecam uses the keyboard and mouse only.
 
 ## 🛠️ Building from source
 
-You need Windows 10 or 11 (x64) and [mise](https://mise.jdx.dev). The mod manager's crates are path dependencies, so clone [levi-crates](https://github.com/alaydriem/levi-crates) next to this repo, as `../levi-crates`. mise installs the pinned versions of xmake and cbindgen. You also need Rust through rustup (the version is pinned in `rust-toolchain.toml`), [cargo-nextest](https://nexte.st), and LLVM with `clang-cl`.
+You need Windows 10 or 11 (x64) and [mise](https://mise.jdx.dev). mise installs the pinned versions of xmake and cbindgen. You also need Rust through rustup (the version is pinned in `rust-toolchain.toml`), [cargo-nextest](https://nexte.st), and LLVM with `clang-cl`.
 
 ```powershell
-git clone https://github.com/alaydriem/levi-crates
 git clone https://github.com/alaydriem/levi-freecam
 cd levi-freecam
 mise trust

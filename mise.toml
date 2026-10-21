@@ -1,9 +1,7 @@
 [tasks.preflight]
-description = "Names a missing levi-crates checkout, Rust toolchain or cargo-nextest before a build turns it into an obscure error"
+description = "Names a missing Rust toolchain or cargo-nextest before a build turns it into an obscure error"
 dir = "{{config_root}}"
-shell = "bash -c"
 run = [
-  "test -f ../levi-crates/Cargo.toml || { echo 'levi-crates not found at ../levi-crates (path dependencies need it next to this repo)'; exit 1; }",
   "rustc --version",
   "cargo --version",
   "cargo nextest --version",
@@ -15,8 +13,7 @@ dir = "{{config_root}}"
 run = [
   "cargo check --workspace --all-targets",
   "cargo clippy --workspace --all-targets -- -D warnings",
-  # only this workspace's crates: --all would also check the levi-crates path dependencies
-  "cargo fmt -p freecam-core -p freecam-ffi -p freecam-ui --check",
+  "cargo fmt --all --check",
 ]
 
 [tasks.test]

@@ -9,7 +9,8 @@ use freecam_core::services::FreecamController;
 use freecam_core::structs::{CameraPose, FrameStatus, FreecamAction, StartLeases, Vec3};
 use freecam_ffi::services::{FreecamFrameHandler, RenderClock, UiHandoff};
 use freecam_ui::views::BarLayout;
-use studio_ui::theme::{FontSource, StudioTheme};
+use levi_ui::font::FontSource;
+use levi_ui::theme::Theme;
 
 struct Fixture {
     handoff: Arc<Mutex<UiHandoff>>,
@@ -24,7 +25,7 @@ impl Fixture {
         let clock = Arc::new(RenderClock::new());
         let handler = FreecamFrameHandler::new(Arc::clone(&handoff), Arc::clone(&clock));
         let ctx = Context::default();
-        StudioTheme::install(&ctx, FontSource::Embedded);
+        Theme::install(&ctx, FontSource::Embedded);
         Self { handoff, clock, handler, ctx }
     }
 

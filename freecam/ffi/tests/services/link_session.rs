@@ -127,6 +127,26 @@ fn drain_is_bounded() {
 }
 
 #[test]
+fn freecam_reads_the_manager_language_when_it_registers() {
+    FakeTable::with(|state| state.locale = "en_XA");
+
+    let _session = FfiSession::new();
+
+    assert_eq!(FakeTable::with(|state| state.locale_reads), 1);
+}
+
+#[test]
+fn locale_changed_reads_the_language_again() {
+    let session = FfiSession::new();
+    FakeTable::with(|state| state.locale = "en_XA");
+
+    FakeTable::push_event(ModEvent::LocaleChanged);
+    session.frame(&FfiSession::ready_status());
+
+    assert_eq!(FakeTable::with(|state| state.locale_reads), 2);
+}
+
+#[test]
 fn exit_after_another_mod_took_the_camera_sends_no_clear() {
     let session = FfiSession::new();
     FfiSession::tap(FreecamAction::Toggle);

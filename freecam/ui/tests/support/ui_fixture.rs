@@ -1,8 +1,10 @@
-use egui::{Context, Event, PointerButton, Pos2, RawInput, Rect, vec2};
+use egui::{Context, Event, PointerButton, Pos2, RawInput, Rect, Shape, vec2};
 use freecam_core::config::KeyConfig;
 use freecam_core::structs::{UiAction, UiLegend, UiSnapshot};
-use freecam_ui::runtime::FreecamUi;
-use studio_ui::theme::{FontSource, StudioTheme};
+use freecam_ui::runtime::{FreecamLocale, FreecamUi};
+use levi_ui::font::FontSource;
+use levi_ui::text::UiLocale;
+use levi_ui::theme::Theme;
 
 /// A pointer event as the mod manager feeds it to egui, in points.
 #[derive(Debug, Clone, Copy)]
@@ -28,7 +30,7 @@ pub struct FrameResult {
     pub wants_pointer: bool,
 }
 
-/// The freecam views in a Studio Dark context as the mod manager makes it, run on a 1920x1080 screen.
+/// The freecam views in a levi-ui context as the mod manager makes it, run on a 1920x1080 screen.
 pub struct UiFixture {
     pub ui: FreecamUi,
     pub ctx: Context,
@@ -47,7 +49,7 @@ impl UiFixture {
 
     pub fn new() -> Self {
         let ctx = Context::default();
-        StudioTheme::install(&ctx, FontSource::Embedded);
+        Theme::install(&ctx, FontSource::Embedded);
         Self {
             ui: FreecamUi::new(),
             ctx,
@@ -96,7 +98,34 @@ impl UiFixture {
     /// A new context with the theme, as the mod manager makes one after the renderer lost its textures.
     pub fn new_context(&mut self) {
         self.ctx = Context::default();
-        StudioTheme::install(&self.ctx, FontSource::Embedded);
+        Theme::install(&self.ctx, FontSource::Embedded);
+    }
+
+    /// The views' words in the language of `code`, as the mod manager sets them: empty for English, `en_XA` for the
+    /// pseudo-locale.
+    pub fn locale(self, code: &str) -> Self {
+        UiLocale::set(&self.ctx, FreecamLocale::localizer(code));
+        self
+    }
+
+    /// Runs one frame and returns each painted text with its rect on the screen.
+    pub fn texts(&mut self) -> Vec<(String, Rect)> {
+        let (output, _) = self.pass(&[]);
+        let mut texts = Vec::new();
+        for clipped in output.shapes {
+            Self::collect_texts(&clipped.shape, &mut texts);
+        }
+        texts
+    }
+
+    fn collect_texts(shape: &Shape, texts: &mut Vec<(String, Rect)>) {
+        match shape {
+            Shape::Text(text) => {
+                texts.push((text.galley.text().to_owned(), text.galley.rect.translate(text.pos.to_vec2())));
+            }
+            Shape::Vec(shapes) => shapes.iter().for_each(|shape| Self::collect_texts(shape, texts)),
+            _ => {}
+        }
     }
 
     /// Runs enough empty frames for every hover and selection transition to finish.

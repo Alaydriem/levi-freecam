@@ -1,7 +1,9 @@
 use egui::FontFamily;
-use freecam_core::structs::UiAction;
+use freecam_core::structs::{ToastKind, UiAction, UiLegend};
+use freecam_ui::message::FreecamMessage;
 use freecam_ui::views::BarLayout;
-use studio_ui::theme::FontLoader;
+use levi_i18n::message::Message;
+use levi_ui::font::FontLoader;
 
 use crate::support::ui_fixture::{UiEvent, UiFixture};
 
@@ -105,4 +107,80 @@ fn bar_wants_the_pointer_over_the_bar_only() {
 
     assert!(over_bar);
     assert!(!away);
+}
+
+// the bar with three points in the pseudo-locale: idle with clear armed, or with point 2 selected; a saved toast
+fn pseudo_bar(selection: Option<usize>) -> UiFixture {
+    let mut fixture = UiFixture::new().with_path().locale("en_XA");
+    fixture.snapshot.selection = selection;
+    fixture.snapshot.clear_armed = selection.is_none();
+    fixture.snapshot.toast = ToastKind::Saved;
+    fixture.snapshot.toast_file[..8].copy_from_slice(b"shot.png");
+    fixture.snapshot.toast_file_len = 8;
+    fixture.settle();
+    fixture
+}
+
+// the legend's words, which freecam-core builds and which stay English
+fn legend_words(legend: &UiLegend) -> Vec<String> {
+    let mut words = Vec::new();
+    for (index, row) in legend.rows.iter().enumerate() {
+        words.push(row.key.clone());
+        words.push(legend.label(index, false).to_owned());
+        words.push(legend.label(index, true).to_owned());
+    }
+    words
+}
+
+#[test]
+fn bar_paints_no_english_word_in_pseudo_locale() {
+    let english: Vec<&str> = FreecamMessage::ALL
+        .iter()
+        .flat_map(|message| message.msgid().split(|c: char| !c.is_ascii_alphabetic()))
+        .filter(|word| word.len() >= 3 && !["count", "seconds", "name", "speed", "number"].contains(word))
+        .collect();
+    for selection in [None, Some(1)] {
+        let mut fixture = pseudo_bar(selection);
+        let allowed = legend_words(&fixture.legend);
+        let texts = fixture.texts();
+        for (text, _) in texts.iter().filter(|(text, _)| !allowed.contains(text)) {
+            let word = english.iter().find(|word| text.contains(**word));
+            assert!(word.is_none(), "selection {selection:?}: {text:?} has the English word {word:?}");
+        }
+    }
+}
+
+#[test]
+fn bar_paints_inside_its_rect_in_pseudo_locale() {
+    let layout = layout();
+    for selection in [None, Some(1)] {
+        let mut fixture = pseudo_bar(selection);
+        let texts = fixture.texts();
+        let on_bar: Vec<_> = texts.iter().filter(|(_, rect)| layout.bar.contains(rect.left_top())).collect();
+        for (text, rect) in &on_bar {
+            assert!(
+                rect.right() <= layout.bar.right() + 0.5,
+                "selection {selection:?}: {text:?} {rect:?} leaves the bar"
+            );
+            // the speed chip and, with a selection, the point tag are fixed parts: their words stay in them
+            let parts = if selection.is_some() { vec![layout.speed, layout.tag] } else { vec![layout.speed] };
+            for part in parts {
+                if part.contains(rect.left_top()) {
+                    assert!(
+                        rect.right() <= part.right() + 0.5,
+                        "selection {selection:?}: {text:?} {rect:?} leaves {part:?}"
+                    );
+                }
+            }
+        }
+        for (index, (text, rect)) in on_bar.iter().enumerate() {
+            for (other, other_rect) in &on_bar[index + 1..] {
+                let overlap = rect.shrink(0.5).intersect(other_rect.shrink(0.5));
+                assert!(
+                    !overlap.is_positive(),
+                    "selection {selection:?}: {text:?} {rect:?} overlaps {other:?} {other_rect:?}"
+                );
+            }
+        }
+    }
 }

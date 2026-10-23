@@ -1,12 +1,13 @@
 use egui::Context;
 use freecam_core::structs::UiSnapshot;
+use levi_ui::draw::{TextStyle, TypeSize};
+use levi_ui::font::FontFace;
 
 use super::PointLabels;
 use crate::widgets::{CachedText, FontWatch};
-use studio_ui::theme::Typeface;
 
-/// The bar's and the toast's changing text, kept between frames. A read-out is laid out again only when its value
-/// or the fonts change, so a frame with the same values allocates no text.
+/// The bar's and the toast's changing text, kept between frames. A read-out is laid out again only when its words
+/// or the fonts change, so a frame with the same values and the same language allocates no galley.
 pub struct BarText {
     fonts: FontWatch,
     generation: u64,
@@ -21,19 +22,26 @@ pub struct BarText {
 }
 
 impl BarText {
+    // the playhead time is the bar's largest read-out; Paper has no type size for it
+    const TIMECODE_SIZE: f32 = 18.0;
+    // the point numbers under the marks
+    const LABEL_SIZE: f32 = 10.5;
+    const READ_OUT: TextStyle = TextStyle::new(TypeSize::Caption, FontFace::Regular);
+    const STRONG: TextStyle = TextStyle::new(TypeSize::Note, FontFace::Semibold);
+
     pub fn new() -> Self {
         let points = UiSnapshot::default().point_distances.len();
         Self {
             fonts: FontWatch::new(),
             generation: 0,
-            timecode: CachedText::new(Typeface::mono(18.0)),
-            total: CachedText::new(Typeface::mono(12.5)),
-            speed: CachedText::new(Typeface::mono(12.5)),
-            count: CachedText::new(Typeface::semibold(13.5)),
-            tag: CachedText::new(Typeface::semibold(13.5)),
-            tip: CachedText::new(Typeface::mono(12.5)),
-            toast: CachedText::new(Typeface::semibold(13.5)),
-            labels: PointLabels::new(Typeface::mono(10.5), points),
+            timecode: CachedText::new(FontFace::Regular.id(Self::TIMECODE_SIZE)),
+            total: CachedText::new(Self::READ_OUT.font_id()),
+            speed: CachedText::new(Self::READ_OUT.font_id()),
+            count: CachedText::new(Self::STRONG.font_id()),
+            tag: CachedText::new(Self::STRONG.font_id()),
+            tip: CachedText::new(Self::READ_OUT.font_id()),
+            toast: CachedText::new(Self::STRONG.font_id()),
+            labels: PointLabels::new(FontFace::Regular.id(Self::LABEL_SIZE), points),
         }
     }
 

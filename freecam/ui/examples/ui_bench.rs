@@ -9,7 +9,8 @@ use egui::{Context, Pos2, RawInput, Rect, vec2};
 use freecam_core::config::KeyConfig;
 use freecam_core::structs::{UiAction, UiLegend, UiSnapshot};
 use freecam_ui::runtime::FreecamUi;
-use studio_ui::theme::{FontSource, StudioTheme};
+use levi_ui::font::FontSource;
+use levi_ui::theme::Theme;
 
 struct Bench;
 
@@ -58,7 +59,7 @@ impl Bench {
 
     fn scene(points: usize) {
         let ctx = Context::default();
-        StudioTheme::install(&ctx, FontSource::Embedded);
+        Theme::install(&ctx, FontSource::Embedded);
         let mut ui = FreecamUi::new();
         let snapshot = Self::snapshot(points);
         let legend = UiLegend::new(&KeyConfig::default());

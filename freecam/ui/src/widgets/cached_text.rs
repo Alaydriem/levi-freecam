@@ -1,11 +1,13 @@
 use std::fmt;
 use std::sync::Arc;
 
+use egui::text::{LayoutJob, TextWrapping};
 use egui::{Color32, FontId, Galley, Painter};
 
-/// One line of text that is laid out again only when its words or the font generation change. Each frame writes
-/// the text into a kept buffer and compares it with the text on show, so a frame whose text did not change
-/// allocates nothing. The galley has a placeholder colour; [`super::BarDraw::place_tinted`] paints it in any colour.
+/// One line of text that is laid out again only when its words, its width limit or the font generation change. Each
+/// frame writes the text into a kept buffer and compares it with the text on show, so a frame whose text did not
+/// change lays out no galley. The galley has a placeholder colour; [`super::BarDraw::place_tinted`] paints it in any
+/// colour.
 pub struct CachedText {
     font: FontId,
     // the text written this frame
@@ -15,18 +17,33 @@ pub struct CachedText {
     galley: Option<Arc<Galley>>,
     // the font generation the galley was laid out in
     generation: u64,
+    // the width the galley was cut to
+    max_width: f32,
 }
 
 impl CachedText {
     pub fn new(font: FontId) -> Self {
-        Self { font, scratch: String::new(), shown: String::new(), galley: None, generation: 0 }
+        let (scratch, shown) = (String::new(), String::new());
+        Self { font, scratch, shown, galley: None, generation: 0, max_width: f32::INFINITY }
     }
 
-    /// The galley for the text `write` puts into the buffer. A write that fails shows no text.
+    /// The galley for the text `write` puts into the buffer, on one line of any width. A write that fails shows no
+    /// text.
     pub fn galley(
         &mut self,
         painter: &Painter,
         generation: u64,
+        write: impl FnOnce(&mut String) -> fmt::Result,
+    ) -> Arc<Galley> {
+        self.galley_within(painter, generation, f32::INFINITY, write)
+    }
+
+    /// Like [`Self::galley`], cut with an ellipsis to `max_width` points, for a read-out in a fixed part of the bar.
+    pub fn galley_within(
+        &mut self,
+        painter: &Painter,
+        generation: u64,
+        max_width: f32,
         write: impl FnOnce(&mut String) -> fmt::Result,
     ) -> Arc<Galley> {
         self.scratch.clear();
@@ -34,12 +51,19 @@ impl CachedText {
             self.scratch.clear();
         }
         match &self.galley {
-            Some(galley) if self.generation == generation && self.scratch == self.shown => Arc::clone(galley),
+            Some(galley)
+                if self.generation == generation && self.max_width == max_width && self.scratch == self.shown =>
+            {
+                Arc::clone(galley)
+            }
             _ => {
                 std::mem::swap(&mut self.scratch, &mut self.shown);
-                let galley = painter.layout_no_wrap(self.shown.clone(), self.font.clone(), Color32::PLACEHOLDER);
+                let mut job = LayoutJob::simple_singleline(self.shown.clone(), self.font.clone(), Color32::PLACEHOLDER);
+                job.wrap = TextWrapping::truncate_at_width(max_width);
+                let galley = painter.layout_job(job);
                 self.galley = Some(Arc::clone(&galley));
                 self.generation = generation;
+                self.max_width = max_width;
                 galley
             }
         }

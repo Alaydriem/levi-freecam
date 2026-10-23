@@ -36,6 +36,7 @@ impl FcHandle {
         let handler = FreecamFrameHandler::new(Arc::clone(&handoff), Arc::clone(&clock));
         let link = ManagerLink::new(table, FreecamDescriptor::DESCRIPTOR, config_dir, handler)?;
         let session = LinkSession::new(link);
+        session.apply_locale();
         let config = session.config();
         clock.set_measure(config.telemetry);
         let folder = config.screenshot.clone().sanitized().folder;

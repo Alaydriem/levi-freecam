@@ -2,17 +2,18 @@ use std::sync::Arc;
 
 use egui::epaint::{Mesh, RectShape};
 use egui::text::{LayoutJob, TextFormat};
-use egui::{Align2, Color32, CornerRadius, FontId, Galley, Painter, Pos2, Rect, Shape, Stroke, StrokeKind, Vec2, pos2};
-use studio_ui::theme::Typeface;
-use studio_ui::widgets::Draw;
+use egui::{Align2, Color32, CornerRadius, FontId, Galley, Painter, Pos2, Rect, Shape, Stroke, Vec2, pos2};
+use levi_i18n::text::Text;
+use levi_ui::draw::{Draw, TextFit, TextStyle, TypeSize};
+use levi_ui::font::FontFace;
 
-/// The painting helpers the bar needs that `studio_ui::widgets::Draw` does not have, or has with an allocation the
-/// bar avoids.
+/// The painting helpers the bar needs that `levi_ui::draw::Draw` does not have, or has with an allocation the bar
+/// avoids.
 pub struct BarDraw;
 
 impl BarDraw {
-    const CAPS_SIZE: f32 = 11.5;
-    const CAPS_SPACING: f32 = 0.7;
+    /// The bar's spaced capitals ("SPEED"): Paper's micro size, semibold, with the section tracking.
+    pub const CAPS: TextStyle = TextStyle::new(TypeSize::Micro, FontFace::Semibold).tracked();
 
     /// Lays out one line of text. Measure and paint the same galley: each layout copies the text.
     pub fn galley(painter: &Painter, text: impl Into<String>, font: FontId, color: Color32) -> Arc<Galley> {
@@ -44,27 +45,15 @@ impl BarDraw {
         painter.text(pos, anchor, text, font, color)
     }
 
-    /// UPPERCASE label with tracking; `text` is given in upper case, so nothing is converted per frame.
-    pub fn caps(painter: &Painter, pos: Pos2, anchor: Align2, text: &str, color: Color32) -> Rect {
-        let galley = Self::tracked(painter, text, Typeface::semibold(Self::CAPS_SIZE), color, Self::CAPS_SPACING);
-        Draw::place(painter, galley, pos, anchor)
+    /// Spaced capitals; the message gives its words in capitals, so nothing is converted per frame.
+    pub fn caps(painter: &Painter, pos: Pos2, anchor: Align2, text: &Text, color: Color32) -> Rect {
+        Draw::text(painter, pos, anchor, text, Self::CAPS, color, TextFit::Line)
     }
 
     /// A one-pixel vertical line, snapped to the pixel centre.
     pub fn vline(painter: &Painter, x: f32, y0: f32, y1: f32, color: Color32) {
         let x = x.floor() + 0.5;
         painter.line_segment([pos2(x, y0), pos2(x, y1)], Stroke::new(1.0, color));
-    }
-
-    /// Diamond point glyph: a square turned 45 degrees with its corners `half` from `center`. A turned rect needs no
-    /// point list, so a diamond allocates nothing.
-    pub fn diamond(painter: &Painter, center: Pos2, half: f32, fill: Color32, stroke: Stroke) {
-        let side = half * std::f32::consts::SQRT_2;
-        let rect = Rect::from_center_size(center, Vec2::splat(side));
-        let shape = RectShape::new(rect, CornerRadius::ZERO, fill, stroke, StrokeKind::Middle)
-            .with_round_to_pixels(false)
-            .with_angle(std::f32::consts::FRAC_PI_4);
-        painter.add(shape);
     }
 
     /// Horizontal gradient from `from` at the left edge to `to` at the right edge.

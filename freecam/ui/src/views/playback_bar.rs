@@ -1,16 +1,21 @@
-use egui::{Area, Color32, Id, Order, Rect, Ui, vec2};
+use egui::{Area, Color32, Id, Order, Rect, Ui};
 use freecam_core::structs::{UiAction, UiSnapshot};
+use levi_ui::draw::{Corner, Draw};
+use levi_ui::icon::Icon;
+use levi_ui::state::DisabledReason;
+use levi_ui::tokens::rule::Elevation;
+use levi_ui::tokens::{ColorToken, color};
+use levi_ui::widget::IconButton;
 
 use super::{BarControls, BarLayout, BarText, Scrubber};
-use crate::widgets::{BarDraw, ButtonState, IconButton};
-use studio_ui::theme::{Icon, StudioPalette};
-use studio_ui::widgets::Draw;
+use crate::id::FreecamUiId;
+use crate::message::FreecamMessage;
+use crate::widgets::{BarButton, BarDraw};
 
 /// The playback bar: a floating pill at the bottom centre, shown in bar mode while no path plays.
 pub struct PlaybackBar;
 
 impl PlaybackBar {
-    const RADIUS: u8 = 14;
     const DIVIDER_REACH: f32 = 16.0;
 
     pub fn is_shown(snapshot: &UiSnapshot) -> bool {
@@ -27,7 +32,7 @@ impl PlaybackBar {
             return Rect::NOTHING;
         }
         let layout = BarLayout::new(ui.ctx().content_rect());
-        Area::new(Id::unique("freecam.playback_bar")).order(Order::Middle).fixed_pos(layout.bar.min).show(
+        Area::new(Id::unique(FreecamUiId::PlaybackBar)).order(Order::Middle).fixed_pos(layout.bar.min).show(
             ui.ctx(),
             |ui| {
                 ui.set_min_size(layout.bar.size());
@@ -48,8 +53,10 @@ impl PlaybackBar {
         BarControls::transport(ui, layout, snapshot, text, actions);
         BarControls::speed_chip(ui, layout, snapshot, text);
         Scrubber::show(ui, layout.track, snapshot, text, actions);
-        let shot = if snapshot.can_screenshot { ButtonState::Normal } else { ButtonState::Disabled };
-        if IconButton::with_state(Icon::CAMERA, "screenshot", 17.0, shot).show(ui, layout.shot).clicked() {
+        let shot = IconButton::new(Icon::Camera);
+        let unavailable =
+            (!snapshot.can_screenshot).then(|| DisabledReason::message(FreecamMessage::ScreenshotUnavailable));
+        if BarButton::icon(ui, layout.shot, FreecamUiId::Screenshot, &shot, unavailable).clicked() {
             actions.push(UiAction::Screenshot);
         }
         match snapshot.selection.filter(|index| *index < snapshot.point_count as usize) {
@@ -61,19 +68,12 @@ impl PlaybackBar {
     fn pill(ui: &Ui, layout: &BarLayout) {
         let painter = ui.painter();
         let rect = layout.bar;
-        Draw::shadow(
-            painter,
-            rect,
-            Self::RADIUS,
-            24.0,
-            vec2(0.0, 8.0),
-            StudioPalette::alpha(StudioPalette::SHADOW, 0.9),
-        );
-        Draw::fill(painter, rect, Self::RADIUS, StudioPalette::alpha(StudioPalette::BG_PANEL, 0.92));
-        Draw::outline(painter, rect, Self::RADIUS, 1.0, Color32::from_white_alpha(20));
+        let fill = <color::BgPanel as ColorToken>::VALUE.gamma_multiply(0.92);
+        Draw::surface(painter, rect, Corner::Panel, fill, Some(Color32::from_white_alpha(20)), Elevation::Floating);
         let cy = rect.center().y;
         let (top, bottom) = (cy - Self::DIVIDER_REACH, cy + Self::DIVIDER_REACH);
-        BarDraw::vline(painter, layout.divider_x, top, bottom, StudioPalette::LINE_STRONG);
-        BarDraw::vline(painter, layout.shot_divider_x, top, bottom, StudioPalette::LINE_STRONG);
+        let line = <color::LineStrong as ColorToken>::VALUE;
+        BarDraw::vline(painter, layout.divider_x, top, bottom, line);
+        BarDraw::vline(painter, layout.shot_divider_x, top, bottom, line);
     }
 }

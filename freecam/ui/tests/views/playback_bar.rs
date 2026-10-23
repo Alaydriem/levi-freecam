@@ -1,6 +1,7 @@
 use egui::{Pos2, Rect, pos2, vec2};
 use freecam_core::structs::{ToastKind, UiAction, UiSnapshot};
 use freecam_ui::views::{BarLayout, Scrubber, Toast};
+use levi_i18n::localize::Localizer;
 
 use crate::support::ui_fixture::{FrameResult, UiEvent, UiFixture};
 
@@ -236,11 +237,12 @@ fn toast_draws_file_name() {
     let failed = UiSnapshot { toast: ToastKind::Failed, ..saved };
     let mut broken = saved;
     broken.toast_file[0] = 0xFF;
+    let english = Localizer::english();
 
-    assert_eq!(Toast::message(&saved).as_deref(), Some("Screenshot saved: freecam-20261020-101010.png"));
-    assert_eq!(Toast::message(&failed).as_deref(), Some("Screenshot failed"));
-    assert_eq!(Toast::message(&broken).as_deref(), Some("Screenshot saved: "));
-    assert_eq!(Toast::message(&UiSnapshot::default()), None);
+    assert_eq!(Toast::message(&saved, &english).as_deref(), Some("Screenshot saved: freecam-20261020-101010.png"));
+    assert_eq!(Toast::message(&failed, &english).as_deref(), Some("Screenshot failed"));
+    assert_eq!(Toast::message(&broken, &english).as_deref(), Some("Screenshot saved: "));
+    assert_eq!(Toast::message(&UiSnapshot::default(), &english), None);
 
     let toast_band = |out: &FrameResult| {
         let top = layout().bar.top();

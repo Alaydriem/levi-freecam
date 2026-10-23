@@ -16,10 +16,12 @@ thiserror = "2.0.21"
 tempfile = "3.27.0"
 stats_alloc = "0.1.10"
 egui = "=0.37.0"
-amm-abi = { git = "https://github.com/alaydriem/levi-crates", branch = "master" }
-amm-client = { git = "https://github.com/alaydriem/levi-crates", branch = "master" }
-amm-core = { git = "https://github.com/alaydriem/levi-crates", branch = "master" }
-studio-ui = { git = "https://github.com/alaydriem/levi-crates", branch = "master" }
+amm-abi = { path = "../levi-crates/crates/amm-abi" }
+amm-client = { path = "../levi-crates/crates/amm-client" }
+amm-core = { path = "../levi-crates/crates/amm-core" }
+levi-ui = { path = "../levi-crates/crates/levi-ui" }
+levi-i18n = { path = "../levi-crates/crates/levi-i18n" }
+levi-i18n-tool = { path = "../levi-crates/crates/levi-i18n-tool" }
 curia = "=0.2.2"
 hcl-rs = "=0.19.8"
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }

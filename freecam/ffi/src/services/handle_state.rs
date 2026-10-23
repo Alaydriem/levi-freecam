@@ -36,11 +36,12 @@ impl HandleState {
         &mut self.controller
     }
 
-    // the manager's events since the last frame, in order: a settings change reads config.hcl again, every other
-    // event goes to core
+    // the manager's events since the last frame, in order: a settings change reads config.hcl again, a language
+    // change reads the language again, every other event goes to core
     pub fn apply_events(&mut self) {
         let Self { controller, session, relay, .. } = self;
         let mut config_changed = false;
+        let mut locale_changed = false;
         let mut disabled = false;
         for event in session.drain() {
             if relay.on_event(event, controller) {
@@ -48,6 +49,7 @@ impl HandleState {
             }
             match event {
                 ModEvent::SettingsChanged { .. } => config_changed = true,
+                ModEvent::LocaleChanged => locale_changed = true,
                 ModEvent::Disabled => {
                     disabled = true;
                     controller.on_link_event(event);
@@ -60,6 +62,9 @@ impl HandleState {
         }
         if config_changed {
             controller.apply_config(session.config());
+        }
+        if locale_changed {
+            session.apply_locale();
         }
     }
 

@@ -10,10 +10,12 @@ autotests = false
 egui.workspace = true
 freecam-core.workspace = true
 curia.workspace = true
-studio-ui.workspace = true
+levi-ui.workspace = true
+levi-i18n.workspace = true
 
 [dev-dependencies]
 stats_alloc.workspace = true
+levi-i18n-tool.workspace = true
 
 [[test]]
 name = "integration"

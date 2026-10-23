@@ -8,6 +8,7 @@ use amm_core::structs::event::ModEvent;
 use amm_core::structs::lease::AcquireOutcome;
 use freecam_core::config::FreecamConfig;
 use freecam_core::structs::StartLeases;
+use freecam_ui::runtime::FreecamLocale;
 
 // freecam's link to the mod manager, on the game thread only: the frame's events, the flight leases and the cursor.
 //
@@ -32,6 +33,13 @@ impl LinkSession {
     pub fn new(link: ManagerLink) -> Self {
         let can_screenshot = link.supports_screenshots();
         Self { link, events: Vec::with_capacity(Self::DRAIN_LIMIT), holding: false, cursor_on: false, can_screenshot }
+    }
+
+    // reads the language the person picked in the manager and gives the frame's layers freecam's words in it; a
+    // manager older than ABI 1.5 has no language setting, so freecam shows English
+    pub fn apply_locale(&self) {
+        let code = self.link.locale().unwrap_or_default();
+        self.link.set_localizer(FreecamLocale::localizer(&code));
     }
 
     // the events queued since the last frame, up to DRAIN_LIMIT

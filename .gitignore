@@ -3,8 +3,5 @@
 /shim/build
 /shim/.xmake
 /shim/bin
-/spike/build
-/spike/.xmake
-/spike/bin
 /.superpowers/
 docs

@@ -22,6 +22,10 @@ impl Vec3 {
         if length > 0.0 { self * (1.0 / length) } else { self }
     }
 
+    pub fn is_finite(self) -> bool {
+        self.x.is_finite() && self.y.is_finite() && self.z.is_finite()
+    }
+
     pub fn dot(self, other: Self) -> f32 {
         self.x * other.x + self.y * other.y + self.z * other.z
     }

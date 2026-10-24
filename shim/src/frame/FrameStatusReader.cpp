@@ -2,8 +2,6 @@
 
 #include "camera/CameraInstructions.h"
 #include "camera/RenderOverride.h"
-#include "mod/FreecamMod.h"
-#include "render/OverlayHook.h"
 
 #include <mc/client/game/ClientInstance.h>
 #include <mc/client/options/IOptionRegistry.h>
@@ -108,17 +106,10 @@ void readPlayer(ClientInstance& client, LocalPlayer& player, FcFrameStatus& stat
     status.dimension  = static_cast<int32_t>(player.getDimensionId());
 }
 
-// a camera with no aspect yet falls back to the back buffer's shape
-float aspectOrScreen(float aspect, float width, float height) {
-    if (std::isfinite(aspect) && aspect > 0.0f) return aspect;
-    return height > 0.0f ? width / height : 0.0f;
-}
-
+// a camera with no aspect yet gives 0, and Rust falls back to the screen the mod manager draws on
 void readProjection(FcFrameStatus& status) {
-    OverlayHook::backBufferSize(status.screen_width, status.screen_height);
     status.fov_y_degrees = gCameraFov.load(std::memory_order_relaxed);
-    status.aspect =
-        aspectOrScreen(gCameraAspect.load(std::memory_order_relaxed), status.screen_width, status.screen_height);
+    status.aspect        = gCameraAspect.load(std::memory_order_relaxed);
 }
 
 } // namespace
@@ -138,8 +129,7 @@ FcFrameStatus FrameStatusReader::read(ClientInstance* client) {
     }
     readProjection(status);
     if (!client) return status;
-    status.menu_open  = client->isShowingMenu() ? 1 : 0;
-    status.gui_hidden = client->getOptions().getHideHud() ? 1 : 0;
+    status.menu_open = client->isShowingMenu() ? 1 : 0;
     if (LocalPlayer* player = client->getLocalPlayer()) readPlayer(*client, *player, status);
     readCameras(*client, status);
     return status;
@@ -147,7 +137,7 @@ FcFrameStatus FrameStatusReader::read(ClientInstance* client) {
 
 // the camera's mFov and mAspectRatio are 0 here, so both come from the projection matrix:
 // P[1][1] = 1 / tan(fov_y / 2) and P[0][0] = P[1][1] / aspect. A degenerate matrix gives 0 for both, which
-// core rejects, and the aspect then falls back to the back buffer
+// core rejects, and the aspect then falls back to the screen size
 void FrameStatusReader::observeCamera(mce::Camera const& camera) {
     glm::mat4 projection = camera.getProjectionMatrix();
     float     focalY     = projection[1][1];
@@ -155,19 +145,6 @@ void FrameStatusReader::observeCamera(mce::Camera const& camera) {
     bool      usable     = std::isfinite(focalY) && std::isfinite(focalX) && focalY > 0.0f && focalX > 0.0f;
     gCameraFov.store(usable ? 2.0f * std::atan(1.0f / focalY) * DEGREES_PER_RADIAN : 0.0f, std::memory_order_relaxed);
     gCameraAspect.store(usable ? focalY / focalX : 0.0f, std::memory_order_relaxed);
-}
-
-void FrameStatusReader::logProjectionInputs(FcFrameStatus const& status) {
-    FreecamMod::getInstance().getSelf().getLogger().info(
-        "overlay inputs (from the projection matrix): matrix fov {}, matrix aspect {}; fov_y_degrees {}, aspect {}, back "
-        "buffer {}x{}",
-        gCameraFov.load(std::memory_order_relaxed),
-        gCameraAspect.load(std::memory_order_relaxed),
-        status.fov_y_degrees,
-        status.aspect,
-        status.screen_width,
-        status.screen_height
-    );
 }
 
 } // namespace levi_freecam

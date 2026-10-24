@@ -1,52 +1,63 @@
-use crate::structs::CameraPose;
+use crate::structs::PathKey;
 
 pub const PATH_CAPACITY: usize = 256;
 
 pub struct PathStore {
-    points: Vec<CameraPose>,
+    keys: Vec<PathKey>,
     capacity: usize,
     revision: u64,
 }
 
 impl PathStore {
     pub fn new(capacity: usize) -> Self {
-        Self { points: Vec::with_capacity(capacity), capacity, revision: 0 }
+        Self { keys: Vec::with_capacity(capacity), capacity, revision: 0 }
     }
 
-    // returns false when the store is full
-    pub fn push(&mut self, pose: CameraPose) -> bool {
-        if self.points.len() >= self.capacity {
+    // puts the key at `index`, or at the end when the index is past it; false when the store is full
+    pub fn insert_at(&mut self, index: usize, key: PathKey) -> bool {
+        if self.keys.len() >= self.capacity {
             return false;
         }
-        self.points.push(pose);
+        self.keys.insert(index.min(self.keys.len()), key);
         self.revision += 1;
         true
     }
 
-    // returns false when there is nothing to remove
-    pub fn undo(&mut self) -> bool {
-        if self.points.pop().is_none() {
+    // returns false when the index is past the end
+    pub fn replace_at(&mut self, index: usize, key: PathKey) -> bool {
+        let Some(slot) = self.keys.get_mut(index) else {
+            return false;
+        };
+        *slot = key;
+        self.revision += 1;
+        true
+    }
+
+    // returns false when the index is past the end
+    pub fn remove_at(&mut self, index: usize) -> bool {
+        if index >= self.keys.len() {
             return false;
         }
+        self.keys.remove(index);
         self.revision += 1;
         true
     }
 
     pub fn clear(&mut self) {
-        self.points.clear();
+        self.keys.clear();
         self.revision += 1;
     }
 
-    pub fn points(&self) -> &[CameraPose] {
-        &self.points
+    pub fn keys(&self) -> &[PathKey] {
+        &self.keys
     }
 
     pub fn len(&self) -> usize {
-        self.points.len()
+        self.keys.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.points.is_empty()
+        self.keys.is_empty()
     }
 
     // grows on every successful change

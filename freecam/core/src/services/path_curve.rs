@@ -6,11 +6,15 @@ use crate::structs::path::CurveSample;
 pub const SAMPLES_PER_SEGMENT: usize = 32;
 
 const KNOT_FLOOR: f32 = 1e-4;
+// a pace interval below this, pace points under 0.01 blocks apart, gives way to the curve's own interval
+const MIN_PACE_INTERVAL: f32 = 0.1;
 const PITCH_LIMIT: f32 = 89.9;
 
 pub struct PathCurve {
     // control points with yaw unwrapped into one continuous run
     points: Vec<CameraPose>,
+    // knot interval of each segment, from the pace points
+    intervals: Vec<f32>,
     samples: Vec<CurveSample>,
 }
 
@@ -18,12 +22,28 @@ impl PathCurve {
     pub fn new() -> Self {
         Self {
             points: Vec::with_capacity(PATH_CAPACITY),
+            intervals: Vec::with_capacity(PATH_CAPACITY),
             samples: Vec::with_capacity(PATH_CAPACITY * SAMPLES_PER_SEGMENT + 1),
         }
     }
 
     // reuses the buffers made by new; points past PATH_CAPACITY are ignored
     pub fn rebuild(&mut self, points: &[CameraPose]) {
+        self.rebuild_paced(points, points);
+    }
+
+    // the same as rebuild, but the knot spacing comes from the positions of `pace`, one per point, so
+    // this curve sampled at another curve's segment and local t moves in step with it; a pace of
+    // another length is ignored, and where two pace points almost coincide the curve's own spacing
+    // is used so the curve cannot overshoot
+    pub fn rebuild_paced(&mut self, points: &[CameraPose], pace: &[CameraPose]) {
+        let pace = if pace.len() == points.len() { pace } else { points };
+        self.intervals.clear();
+        let count = points.len().min(PATH_CAPACITY);
+        self.intervals.extend(pace[..count].windows(2).zip(points[..count].windows(2)).map(|(paced, own)| {
+            let interval = Self::knot_interval(paced[0].position, paced[1].position);
+            if interval < MIN_PACE_INTERVAL { Self::knot_interval(own[0].position, own[1].position) } else { interval }
+        }));
         self.points.clear();
         self.samples.clear();
         let mut previous_yaw = 0.0;
@@ -54,21 +74,20 @@ impl PathCurve {
     }
 
     pub fn pose_at(&self, distance: f32) -> CameraPose {
-        let Some(first) = self.points.first() else {
-            return CameraPose::default();
-        };
+        let (segment, t) = self.segment_at(distance);
+        self.pose_in_segment(segment, t)
+    }
+
+    // the segment index and local parameter at this distance along the curve; (0, 0.0) before the start
+    // or on a curve with no length
+    pub fn segment_at(&self, distance: f32) -> (usize, f32) {
+        let segments = self.points.len().saturating_sub(1);
         let length = self.length();
-        if self.samples.len() < 2 || length <= 0.0 {
-            return Self::clamped(*first);
-        }
-        if distance.is_nan() {
-            return Self::clamped(*first);
-        }
-        if distance <= 0.0 {
-            return Self::clamped(*first);
+        if segments == 0 || self.samples.len() < 2 || length <= 0.0 || distance.is_nan() || distance <= 0.0 {
+            return (0, 0.0);
         }
         if distance >= length {
-            return self.points.last().map_or(Self::clamped(*first), |last| Self::clamped(*last));
+            return (segments - 1, 1.0);
         }
         let upper = self.samples.partition_point(|sample| sample.distance <= distance).clamp(1, self.samples.len() - 1);
         let low = self.samples[upper - 1];
@@ -76,8 +95,32 @@ impl PathCurve {
         let span = high.distance - low.distance;
         let fraction = if span > 0.0 { ((distance - low.distance) / span).clamp(0.0, 1.0) } else { 0.0 };
         let high_t = if high.segment == low.segment { high.t } else { 1.0 };
-        let t = low.t + (high_t - low.t) * fraction;
-        self.evaluate(low.segment as usize, t)
+        (low.segment as usize, low.t + (high_t - low.t) * fraction)
+    }
+
+    // the pose at local parameter `t` of segment `index`; the index is clamped to the last segment and
+    // the ends of a segment are its control points exactly
+    pub fn pose_in_segment(&self, index: usize, t: f32) -> CameraPose {
+        let count = self.points.len();
+        if count < 2 {
+            return self.points.first().map_or(CameraPose::default(), |first| Self::clamped(*first));
+        }
+        let index = index.min(count - 2);
+        if t.is_nan() || t <= 0.0 {
+            return Self::clamped(self.points[index]);
+        }
+        if t >= 1.0 {
+            return Self::clamped(self.points[index + 1]);
+        }
+        self.evaluate(index, t)
+    }
+
+    pub fn position_in_segment(&self, index: usize, t: f32) -> Vec3 {
+        self.pose_in_segment(index, t).position
+    }
+
+    pub fn position_at(&self, distance: f32) -> Vec3 {
+        self.pose_at(distance).position
     }
 
     // refills `out` with `per_segment` positions per segment plus the final point
@@ -123,9 +166,12 @@ impl PathCurve {
         let p3 = if segment + 2 >= count { Self::mirror(p2, p1) } else { self.points[segment + 2] };
 
         let positions = [p0.position, p1.position, p2.position, p3.position];
-        let k1 = Self::knot_interval(positions[0], positions[1]);
-        let k2 = k1 + Self::knot_interval(positions[1], positions[2]);
-        let k3 = k2 + Self::knot_interval(positions[2], positions[3]);
+        let middle = self.intervals[segment];
+        let before = if segment == 0 { middle } else { self.intervals[segment - 1] };
+        let after = self.intervals.get(segment + 1).copied().unwrap_or(middle);
+        let k1 = before;
+        let k2 = k1 + middle;
+        let k3 = k2 + after;
         let position = Self::barry_goldman(positions, [0.0, k1, k2, k3], k1 + t * (k2 - k1));
 
         let angles = [p0, p1, p2, p3].map(|pose| Vec3::new(pose.yaw, pose.pitch, 0.0));
@@ -164,7 +210,7 @@ impl PathCurve {
     }
 
     // wraps an angle difference into [-180, 180]
-    fn wrap_degrees(delta: f32) -> f32 {
+    pub fn wrap_degrees(delta: f32) -> f32 {
         delta - 360.0 * (delta / 360.0).round()
     }
 }

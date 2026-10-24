@@ -6,6 +6,12 @@
 #include <stdint.h>
 #include <stddef.h>
 
+
+
+#define ScreenshotPath_MAX_ATTEMPTS 99
+
+#define UiHandoff_ACTION_CAPACITY 16
+
 typedef enum FcStatus {
   FC_STATUS_OK = 0,
   FC_STATUS_INVALID_ARGUMENT = 1,
@@ -35,7 +41,6 @@ typedef struct FcFrameStatus {
   uint8_t ready;
   uint8_t player_camera_active;
   struct FcPose start_pose;
-  uint8_t gui_hidden;
   int32_t health;
   int32_t dimension;
   uint8_t has_rendered_position;
@@ -46,18 +51,63 @@ typedef struct FcFrameStatus {
   struct FcVec3 game_camera_position;
   float fov_y_degrees;
   float aspect;
-  float screen_width;
-  float screen_height;
+  float last_shape_send_us;
+  uint32_t handler_generation;
 } FcFrameStatus;
+
+typedef struct FcMarkerEntry {
+  uint64_t id;
+  /**
+   * 0 remove (only `id` is used), 1 line, 2 box, 3 arrow
+   */
+  uint8_t kind;
+  /**
+   * start of a line or arrow, the minimum corner of a box
+   */
+  struct FcVec3 location;
+  /**
+   * end of a line or arrow, the size of a box
+   */
+  struct FcVec3 end;
+  /**
+   * ARGB
+   */
+  uint32_t color;
+  int32_t dimension;
+} FcMarkerEntry;
+
+typedef struct FcRayRequest {
+  /**
+   * 1 when the shim casts the ray and answers with fc_ray_result before the second next fc_frame
+   */
+  uint8_t active;
+  struct FcVec3 origin;
+  /**
+   * unit vector
+   */
+  struct FcVec3 direction;
+  /**
+   * blocks
+   */
+  float max_distance;
+} FcRayRequest;
 
 typedef struct FcFrameOutput {
   uint8_t camera;
   struct FcPose pose;
   uint8_t has_override;
   struct FcPose override_pose;
-  uint8_t gui;
-  uint8_t block_input;
-  uint8_t show_overlay;
+  /**
+   * 1 while freecam controls the camera, until the controller is fully off
+   */
+  uint8_t camera_owned;
+  /**
+   * the marker changes to deliver this frame, in order; borrowed from the handle and valid until the next
+   * fc_frame or fc_destroy. Null when marker_count is 0
+   */
+  const struct FcMarkerEntry *markers;
+  uintptr_t marker_count;
+  struct FcRayRequest ray;
 } FcFrameOutput;
 
 typedef struct FcStr {
@@ -65,64 +115,88 @@ typedef struct FcStr {
   uintptr_t len;
 } FcStr;
 
-typedef void (*FcLogFn)(uint8_t level, const uint8_t *message, uintptr_t len);
-
-typedef struct FcOverlaySegment {
-  float x0;
-  float y0;
-  float x1;
-  float y1;
-} FcOverlaySegment;
-
-typedef struct FcOverlayMarker {
-  float x;
-  float y;
-  float wedge_x;
-  float wedge_y;
-  uint32_t number;
-  uint8_t is_last;
-} FcOverlayMarker;
-
-typedef struct FcOverlayView {
-  const struct FcOverlaySegment *segments;
-  uint32_t segment_count;
-  const struct FcOverlayMarker *markers;
-  uint32_t marker_count;
-  uint32_t point_count;
-  float shot_seconds;
-  uint8_t visible;
-} FcOverlayView;
-
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus
 
+/**
+ * Writes what the shim does this frame into `out`. Call it from the game thread. It never waits on the UI: it takes
+ * the UI actions before the core frame and publishes the UI snapshot after it, each through a hand-off that is held
+ * only for a copy. When the render thread holds the hand-off at that moment, that swap moves to the next frame.
+ *
+ * On FC_STATUS_OK, `out->markers` points to `out->marker_count` entries the handle owns. They stay valid until the
+ * next fc_frame or fc_destroy on the same handle; the other exports do not change them. Deliver them in order, then
+ * report the time it took in the next frame's `last_shape_send_us`. Skip the batch while no ClientNetworkHandler is
+ * captured: core sends nothing while `handler_generation` is 0.
+ */
 enum FcStatus fc_frame(const struct FcHandle *handle,
                        const struct FcFrameStatus *status,
                        struct FcFrameOutput *out);
 
-enum FcStatus fc_key(const struct FcHandle *handle, uint32_t code, uint8_t down, uint8_t *consume);
+/**
+ * A camera instruction reached the client. kind: 0 other, 1 set or clear. While another mod holds the Camera lease
+ * it is that mod's, not the server's, and changes nothing. Call it from the game thread.
+ */
+enum FcStatus fc_server_instruction(const struct FcHandle *handle,
+                                    uint8_t kind);
 
-enum FcStatus fc_mouse_move(const struct FcHandle *handle, int32_t dx, int32_t dy);
+/**
+ * Registers freecam with the Alaydriem Mod Manager and returns the handle. `config_dir` is the mod's own LeviLamina
+ * config folder, an absolute UTF-8 path, borrowed for the call; the manager keeps freecam's `config.hcl` there. Call
+ * it from the game thread in the mod's enable, never in load. Returns null when the path is null or not UTF-8, when
+ * the mod manager is not loaded, or when it refuses the registration; nothing is logged then, so the caller logs one
+ * line with its own logger and installs no hooks.
+ */
+struct FcHandle *fc_create(const struct FcStr *config_dir);
 
-enum FcStatus fc_mouse_button(const struct FcHandle *handle,
-                              uint8_t button,
-                              int8_t data,
-                              uint8_t *consume);
-
-enum FcStatus fc_server_instruction(const struct FcHandle *handle, uint8_t kind);
-
-struct FcHandle *fc_create(const struct FcStr *config_file, FcLogFn log);
-
+/**
+ * Unregisters from the mod manager and frees the handle; the handle must not be used again. Every buffer borrowed
+ * from fc_frame or fc_markers_shutdown is invalid after this call. Unhook first, so no call can enter Rust during it.
+ */
 void fc_destroy(struct FcHandle *handle);
 
 /**
- * Fills `out` with the path geometry to draw this frame. On Ok the pointers in `out` are non-null, are
- * valid for `segment_count` and `marker_count` elements, borrow buffers the handle owns, and stay valid
- * until the next fc_overlay or fc_destroy call on the same handle.
+ * Logs one line from the shim through Curia, which forwards it to the mod manager's log for freecam. `level` is 0
+ * error, 1 warn, 2 info, 3 debug or 4 trace. `message` and `file` are UTF-8, not null-terminated and borrowed for
+ * the call; `file` may be null with a length of 0. Any thread. Before fc_create succeeds the line goes nowhere. A
+ * null or non-UTF-8 message, or an unknown level, gives FC_STATUS_INVALID_ARGUMENT.
  */
-enum FcStatus fc_overlay(const struct FcHandle *handle,
-                         struct FcOverlayView *out);
+enum FcStatus fc_log(uint32_t level,
+                     const uint8_t *message,
+                     uintptr_t message_len,
+                     const uint8_t *file,
+                     uintptr_t file_len,
+                     uint32_t line);
+
+/**
+ * Answers the ray that the last fc_frame asked for in `ray`. Call it from the game thread after that fc_frame and
+ * before the second next one; a later answer, or an answer with no ray waiting, changes nothing. `hit` is 1 when the
+ * ray hit a block at (x, y, z), 0 when it hit nothing (the position is then ignored).
+ */
+enum FcStatus fc_ray_result(struct FcHandle *handle,
+                            uint8_t hit,
+                            float x,
+                            float y,
+                            float z);
+
+/**
+ * Writes a remove for every marker still in the world into `out` and `count`, ignoring `markers.maxPerSend`. Call it
+ * from the game thread before fc_destroy, while the ClientNetworkHandler is still captured, and deliver every entry.
+ * Afterwards core holds no live marker. On FC_STATUS_OK `*out` points to `*count` entries the handle owns (null when
+ * `*count` is 0). They stay valid until the next fc_markers_shutdown or fc_destroy on the same handle; fc_frame does
+ * not change them.
+ */
+enum FcStatus fc_markers_shutdown(struct FcHandle *handle,
+                                  const struct FcMarkerEntry **out,
+                                  uintptr_t *count);
+
+/**
+ * Marks a flight key-down for the key-to-move telemetry. `time_seconds` is on the clock of
+ * `FcFrameStatus::time_seconds`. Call it from the thread that runs the key event; it does nothing while
+ * telemetry is off.
+ */
+enum FcStatus fc_probe_key(const struct FcHandle *handle,
+                           double time_seconds);
 
 #ifdef __cplusplus
 }  // extern "C"

@@ -10,10 +10,21 @@ autotests = false
 crate-type = ["staticlib", "rlib"]
 
 [dependencies]
+amm-abi.workspace = true
+amm-client.workspace = true
+amm-core = { workspace = true, features = ["egui"] }
+chrono.workspace = true
+curia.workspace = true
+egui.workspace = true
 freecam-core.workspace = true
-log.workspace = true
+freecam-ui.workspace = true
+levi-ui.workspace = true
+levi-i18n.workspace = true
 
 [dev-dependencies]
+amm-client = { workspace = true, features = ["test-support"] }
+hcl-rs.workspace = true
+stats_alloc.workspace = true
 tempfile.workspace = true
 
 [[test]]

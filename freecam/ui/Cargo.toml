@@ -1,0 +1,26 @@
+[package]
+name = "freecam-ui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+autotests = false
+
+[dependencies]
+egui.workspace = true
+freecam-core.workspace = true
+curia.workspace = true
+levi-ui.workspace = true
+levi-i18n.workspace = true
+
+[dev-dependencies]
+stats_alloc.workspace = true
+levi-i18n-tool.workspace = true
+levi-rules.workspace = true
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
+
+[lints]
+workspace = true

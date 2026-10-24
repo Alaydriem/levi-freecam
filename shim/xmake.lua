@@ -4,7 +4,6 @@ add_repositories("levimc-repo https://github.com/LiteLDev/xmake-repo.git")
 
 add_requires("levilamina 26.51.6", {configs = {target_type = "client"}})
 add_requires("levibuildscript 0.6.2")
-add_requires("imgui v1.92.9+b-docking", {configs = {shared = false, win32 = true, dx11 = true}})
 
 if not has_config("vs_runtime") then
     set_runtimes("MD")
@@ -13,8 +12,8 @@ end
 target("alaydriem-freecam")
     add_rules("@levibuildscript/linkrule")
     add_rules("@levibuildscript/modpacker", {modName = "alaydriem-freecam", modVersion = "0.1.0"})
-    add_packages("levilamina", "imgui")
-    add_syslinks("d3d11", "d3d12", "dxgi", "user32", "kernel32", "ntdll", "userenv", "ws2_32", "dbghelp")
+    add_packages("levilamina")
+    add_syslinks("user32", "kernel32", "ntdll", "userenv", "ws2_32", "dbghelp", "bcrypt", "advapi32", "ole32", "shell32")
     add_defines("NOMINMAX", "UNICODE", "_AMD64_")
     set_exceptions("none")
     add_cxflags("/EHa", "/utf-8", "/W4", "/w44265", "/w44289", "/w44296", "/w45263", "/w44738", "/w45204")
@@ -41,3 +40,19 @@ target("alaydriem-freecam")
     add_defines("LL_PLAT_C")
     add_linkdirs("$(projectdir)/../target/release")
     add_links("freecam_ffi")
+    -- the embedded Nordwand Mono font of levi-ui ships with its licence
+    after_build(function (target)
+        import("core.base.json")
+        local manifest = path.join(os.projectdir(), "..", "Cargo.toml")
+        local metadata = json.decode(os.iorunv("cargo", {"metadata", "--format-version", "1", "--manifest-path", manifest}))
+        local crate
+        for _, package in ipairs(metadata.packages) do
+            if package.name == "levi-ui" then
+                crate = path.directory(package.manifest_path)
+            end
+        end
+        assert(crate, "cargo metadata names no levi-ui package")
+        local outputdir = path.join(os.projectdir(), "bin", "alaydriem-freecam")
+        os.mkdir(outputdir)
+        os.cp(path.join(crate, "assets", "fonts", "OFL.txt"), path.join(outputdir, "OFL.txt"))
+    end)

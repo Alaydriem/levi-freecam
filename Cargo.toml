@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["freecam/core", "freecam/ffi"]
+members = ["freecam/core", "freecam/ffi", "freecam/ui"]
 
 [workspace.package]
 version = "0.1.0"
@@ -9,12 +9,25 @@ rust-version = "1.98"
 publish = false
 
 [workspace.dependencies]
-log = "0.4.34"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
+crossbeam-queue = "0.3.14"
 thiserror = "2.0.21"
 tempfile = "3.27.0"
+stats_alloc = "0.1.10"
+egui = "=0.37.0"
+amm-abi = { path = "../levi-modmanager/crates/amm-abi" }
+amm-client = { path = "../levi-modmanager/crates/amm-client" }
+amm-core = { path = "../levi-modmanager/crates/amm-core" }
+levi-ui = { path = "../levi-crates/crates/levi-ui" }
+levi-i18n = { path = "../levi-crates/crates/levi-i18n" }
+levi-i18n-tool = { path = "../levi-crates/crates/levi-i18n-tool" }
+levi-rules = { path = "../levi-crates/crates/levi-rules" }
+curia = "=0.2.2"
+hcl-rs = "=0.19.8"
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
 freecam-core = { path = "freecam/core" }
+freecam-ui = { path = "freecam/ui" }
 
 [workspace.lints.clippy]
 unwrap_used = "deny"

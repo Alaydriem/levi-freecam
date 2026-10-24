@@ -1,21 +1,39 @@
-use freecam_core::structs::{CameraCommand, FrameOutput, GuiCommand};
+use freecam_core::structs::{CameraCommand, FrameOutput};
 
-use crate::types::FcPose;
+use crate::types::{FcMarkerEntry, FcPose, FcRayRequest};
 
 // what the shim does this frame; pose is meaningful only when camera is 1 and override_pose only when
-// has_override is 1, and show_overlay 1 means the shim draws the path overlay
+// has_override is 1
 #[repr(C)]
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FcFrameOutput {
     // 0 none, 1 set, 2 clear
     pub camera: u8,
     pub pose: FcPose,
     pub has_override: u8,
     pub override_pose: FcPose,
-    // 0 none, 1 hide, 2 show
-    pub gui: u8,
-    pub block_input: u8,
-    pub show_overlay: u8,
+    /// 1 while freecam controls the camera, until the controller is fully off
+    pub camera_owned: u8,
+    /// the marker changes to deliver this frame, in order; borrowed from the handle and valid until the next
+    /// fc_frame or fc_destroy. Null when marker_count is 0
+    pub markers: *const FcMarkerEntry,
+    pub marker_count: usize,
+    pub ray: FcRayRequest,
+}
+
+impl Default for FcFrameOutput {
+    fn default() -> Self {
+        Self {
+            camera: 0,
+            pose: FcPose::default(),
+            has_override: 0,
+            override_pose: FcPose::default(),
+            camera_owned: 0,
+            markers: std::ptr::null(),
+            marker_count: 0,
+            ray: FcRayRequest::default(),
+        }
+    }
 }
 
 impl From<&FrameOutput> for FcFrameOutput {
@@ -25,19 +43,15 @@ impl From<&FrameOutput> for FcFrameOutput {
             CameraCommand::Set(pose) => (1, FcPose::from(pose)),
             CameraCommand::Clear => (2, FcPose::default()),
         };
-        let gui = match value.gui {
-            GuiCommand::None => 0,
-            GuiCommand::Hide => 1,
-            GuiCommand::Show => 2,
-        };
         Self {
             camera,
             pose,
             has_override: u8::from(value.render_override.is_some()),
             override_pose: value.render_override.as_ref().map(FcPose::from).unwrap_or_default(),
-            gui,
-            block_input: u8::from(value.block_input),
-            show_overlay: u8::from(value.show_overlay),
+            camera_owned: u8::from(value.camera_owned),
+            markers: std::ptr::null(),
+            marker_count: 0,
+            ray: FcRayRequest::from(value.ray.as_ref()),
         }
     }
 }

@@ -46,6 +46,10 @@ jobs:
             mod:
               - 'shim/**'
               - 'freecam/ffi/**'
+              - 'freecam/ui/**'
+              - 'freecam/core/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
 
   mod:
     needs: [rust, changes]
@@ -68,6 +72,10 @@ jobs:
           key: xmake-${{ hashFiles('shim/xmake.lua') }}
           restore-keys: |
             xmake-
+
+      # build-mod runs build-ffi and header at the same time; on a fresh runner both would install the
+      # toolchain from rust-toolchain.toml at once, and the two rustup downloads race
+      - run: rustup toolchain install --no-self-update
 
       - run: mise run build-mod
 

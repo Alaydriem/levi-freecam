@@ -1,14 +1,14 @@
 #include "camera/CameraInstructions.h"
+#include "bridge/ModLog.h"
 
 #include "mod/FreecamMod.h"
+#include "network/ClientPacketHandler.h"
 
-#include <mc/client/network/ClientNetworkHandler.h>
 #include <mc/deps/core/math/Vec3.h>
 #include <mc/deps/minecraft_camera/CameraInstruction.h>
 #include <mc/deps/shared_types/v1_26_50/camera/CameraPreset.h>
 #include <mc/network/MinecraftPacketIds.h>
 #include <mc/network/MinecraftPackets.h>
-#include <mc/network/NetworkIdentifier.h>
 #include <mc/network/packet/CameraInstructionPacket.h>
 #include <mc/world/level/Level.h>
 #include <mc/world/level/camera/CameraPresets.h>
@@ -25,10 +25,7 @@ constexpr char FREE_PRESET[] = "minecraft:free";
 
 struct Delivery {
     std::recursive_mutex                     mutex;
-    ClientNetworkHandler*                    handler = nullptr;
-    std::optional<NetworkIdentifier>         id;
     std::optional<uint>                      freeIndex;
-    bool                                     hadPlayer = false;
     std::shared_ptr<CameraInstructionPacket> packet;
 };
 
@@ -55,48 +52,25 @@ CameraInstructionPacket* reusablePacket(Delivery& state) {
             MinecraftPackets::createPacket(MinecraftPacketIds::CameraInstruction)
         );
         if (!state.packet) {
-            FreecamMod::getInstance().getSelf().getLogger().warn("could not create a camera instruction packet");
+            ModLog::warn("could not create a camera instruction packet");
         }
     }
     return state.packet.get();
-}
-
-void dropHandler(Delivery& state) {
-    state.handler = nullptr;
-    state.id.reset();
-    state.freeIndex.reset();
 }
 
 bool deliver(LocalPlayer const* player, CameraInstruction const& instruction) {
     if (!player) return false;
     auto&           state = delivery();
     std::lock_guard lock(state.mutex);
-    if (!state.handler || !state.id) return false;
+    if (!ClientPacketHandler::captured()) return false;
     CameraInstructionPacket* packet = reusablePacket(state);
     if (!packet) return false;
     packet->mCameraInstruction = instruction;
     DeliveringScope delivering;
-    state.handler->handle(*state.id, *packet);
-    return true;
+    return ClientPacketHandler::deliver(*packet);
 }
 
 } // namespace
-
-void CameraInstructions::capture(ClientNetworkHandler* handler, NetworkIdentifier const& id) {
-    auto&           state = delivery();
-    std::lock_guard lock(state.mutex);
-    if (state.handler != handler) FreecamMod::getInstance().getSelf().getLogger().info("captured client packet handler");
-    state.handler = handler;
-    state.id      = id;
-}
-
-void CameraInstructions::observeLocalPlayer(LocalPlayer const* player) {
-    auto&           state = delivery();
-    std::lock_guard lock(state.mutex);
-    bool            present = player != nullptr;
-    if (state.hadPlayer && !present) dropHandler(state);
-    state.hadPlayer = present;
-}
 
 bool CameraInstructions::ready(Level& level) {
     std::optional<uint> found;
@@ -111,7 +85,7 @@ bool CameraInstructions::ready(Level& level) {
     auto&           state = delivery();
     std::lock_guard lock(state.mutex);
     state.freeIndex = found;
-    return state.handler != nullptr && state.id.has_value() && found.has_value();
+    return ClientPacketHandler::captured() && found.has_value();
 }
 
 bool CameraInstructions::sendSet(LocalPlayer const* player, const FcPose& pose) {
@@ -144,8 +118,7 @@ bool CameraInstructions::isDelivering() { return t_delivering; }
 void CameraInstructions::reset() {
     auto&           state = delivery();
     std::lock_guard lock(state.mutex);
-    dropHandler(state);
-    state.hadPlayer = false;
+    state.freeIndex.reset();
     state.packet.reset();
 }
 

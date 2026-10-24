@@ -1,5 +1,6 @@
 #include "mod/FreecamMod.h"
 
+#include "bridge/ModLog.h"
 #include "bridge/RustBridge.h"
 #include "camera/CameraInstructions.h"
 #include "camera/RenderOverride.h"
@@ -7,12 +8,16 @@
 #include "hooks/ClientUpdateHook.h"
 #include "hooks/PacketHandlerHooks.h"
 #include "hooks/RenderHooks.h"
-#include "hooks/TurnDeltaHook.h"
-#include "hooks/UIRenderHook.h"
-#include "input/InputListeners.h"
-#include "render/OverlayHook.h"
+#include "network/ClientPacketHandler.h"
+#include "telemetry/LatencyProbe.h"
+#include "world/ShapeDelivery.h"
 
 #include "ll/api/mod/RegisterHelper.h"
+#include "ll/api/service/GamingStatus.h"
+#include "ll/api/service/TargetedBedrock.h"
+
+#include <mc/client/game/ClientInstance.h>
+#include <mc/client/player/LocalPlayer.h>
 
 namespace levi_freecam {
 
@@ -22,16 +27,16 @@ FreecamMod& FreecamMod::getInstance() {
 }
 
 bool FreecamMod::load() {
-    auto& self       = getSelf();
-    auto  configFile = self.getConfigDir() / "config.json";
-    if (!RustBridge::create(configFile)) {
-        self.getLogger().error("levi-freecam could not start its Rust core");
-        return false;
-    }
+    mConfigDir = std::filesystem::absolute(getSelf().getConfigDir());
     return true;
 }
 
 bool FreecamMod::enable() {
+    if (!RustBridge::create(mConfigDir)) {
+        // no Rust sink exists without a registration, so this one line uses the LeviLamina logger
+        getSelf().getLogger().error("alaydriem-mod-manager not found or registration failed; freecam stays off");
+        return true;
+    }
     ClientUpdateHook::hook();
     ChunkPublisherHook::hook();
     CameraPresetsHook::hook();
@@ -39,20 +44,18 @@ bool FreecamMod::enable() {
     SetupCameraHook::hook();
     ViewRenderObjectHook::hook();
     LevelCameraHook::hook();
-    TurnDeltaHook::hook();
-    OverlayHook::arm();
-    UIRenderHook::hook();
-    InputListeners::registerListeners();
-    getSelf().getLogger().info("levi-freecam loaded");
+    LatencyProbe::install();
+    mHooked = true;
+    ModLog::info("levi-freecam loaded");
     return true;
 }
 
 bool FreecamMod::disable() {
-    InputListeners::unregisterListeners();
-    // unhook first so no game, render or packet call can enter Rust, then stop Rust
-    UIRenderHook::unhook();
-    bool overlayDrained = OverlayHook::shutdown();
-    TurnDeltaHook::unhook();
+    if (!mHooked) return true;
+    // before any unhook, while the packet handler is still captured and Rust is still alive
+    removeMarkers();
+    // unhook first so no game, render, packet or key call can enter Rust, then stop Rust
+    LatencyProbe::uninstall();
     LevelCameraHook::unhook();
     ViewRenderObjectHook::unhook();
     SetupCameraHook::unhook();
@@ -63,13 +66,32 @@ bool FreecamMod::disable() {
     FrameDriver::reset();
     RenderOverride::reset();
     CameraInstructions::reset();
-    // a thread still inside the overlay draw may be in fc_overlay; leaking the handle at exit is safe
-    if (!overlayDrained) {
-        getSelf().getLogger().warn("levi-freecam leaves its Rust core alive because the overlay did not stop in time");
-        return true;
-    }
+    ShapeDelivery::reset();
+    ClientPacketHandler::reset();
+    mHooked = false;
     RustBridge::destroy();
     return true;
+}
+
+// the handler is used only while the game still has a client with a local player, and never while the game is
+// stopping: client shapes end with the process, and the handler may already be freed
+void FreecamMod::removeMarkers() {
+    FcHandle* handle = RustBridge::mutableHandle();
+    if (!handle) return;
+    const FcMarkerEntry* entries = nullptr;
+    uintptr_t            count   = 0;
+    if (fc_markers_shutdown(handle, &entries, &count) != FC_STATUS_OK || count == 0) return;
+    if (ll::getGamingStatus() == ll::GamingStatus::Stopping) {
+        ModLog::info("markers: the game is stopping; {} shapes go with the process", count);
+        return;
+    }
+    auto client    = ll::service::getClientInstance();
+    bool worldLive = client && client->getLocalPlayer() != nullptr;
+    if (worldLive && ShapeDelivery::deliver(entries, count)) {
+        ModLog::info("markers: removed {} shapes at shutdown", count);
+        return;
+    }
+    ModLog::warn("markers: {} shapes not removed at shutdown (no world, no captured handler, or another thread)", count);
 }
 
 } // namespace levi_freecam

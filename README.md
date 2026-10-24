@@ -26,7 +26,7 @@ Client-side only. Nothing is sent to the server.
 
 ## Installation
 
-Requires the client build of [LeviLamina](https://github.com/LiteLDev/LeviLamina) and [Alaydriem's Mod Manager](https://github.com/alaydriem/levi-crates).
+Requires the client build of [LeviLamina](https://github.com/LiteLDev/LeviLamina) and [Alaydriem's Mod Manager](https://github.com/alaydriem/levi-modmanager).
 
 ```powershell
 lip install github.com/alaydriem/levi-freecam#client

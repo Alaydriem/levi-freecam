@@ -1,20 +1,17 @@
-use std::path::PathBuf;
+use std::path::Path;
 
 use freecam_ui::message::FreecamMessage;
-use levi_i18n::message::Message;
-use levi_i18n_tool::pot::PotWriter;
+use levi_i18n_tool::catalog::CatalogCheck;
 
 #[test]
-fn every_message_has_a_dense_index() {
-    for (position, message) in FreecamMessage::ALL.iter().enumerate() {
-        assert_eq!(message.index(), position, "{message:?}");
-    }
+fn message_catalog() {
+    let problems: Vec<String> = CatalogCheck::problems::<FreecamMessage>().iter().map(ToString::to_string).collect();
+    assert!(problems.is_empty(), "{}", problems.join("\n"));
 }
 
 #[test]
-fn pot_is_current() {
-    let path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("i18n").join(format!("{}.pot", FreecamMessage::DOMAIN.name()));
-    let stale = PotWriter::write::<FreecamMessage>(&path, true).unwrap_or_else(|error| panic!("{error}"));
-    assert!(!stale, "{} is out of date: run `mise run i18n:extract`", path.display());
+fn pot_up_to_date() {
+    let i18n = Path::new(env!("CARGO_MANIFEST_DIR")).join("i18n");
+    let current = CatalogCheck::pot_is_current::<FreecamMessage>(&i18n).unwrap_or_else(|error| panic!("{error}"));
+    assert!(current, "freecam.pot is out of date: run `mise run i18n:extract`");
 }

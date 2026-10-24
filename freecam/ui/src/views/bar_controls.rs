@@ -1,6 +1,6 @@
 use std::fmt::Write;
 
-use egui::{Align2, Color32, CursorIcon, Pos2, Rect, Sense, Stroke, Ui, pos2, vec2};
+use egui::{Align2, CursorIcon, Pos2, Rect, Sense, Stroke, Ui, pos2, vec2};
 use freecam_core::structs::{UiAction, UiSnapshot};
 use levi_i18n::text::{Args, Text};
 use levi_ui::draw::{Corner, Draw, TextFit, TextStyle, TypeSize};
@@ -14,11 +14,9 @@ use levi_ui::tokens::rule::Elevation;
 use levi_ui::tokens::{ColorToken, color};
 use levi_ui::widget::{ButtonKind, IconButton, Leading, Surface, SurfaceLevel, TextButton};
 
-use super::{BarLayout, BarText, Timecode};
+use super::{BarButton, BarDraw, BarLayout, BarText, Timecode};
 use crate::id::FreecamUiId;
 use crate::message::FreecamMessage;
-use crate::theme::{FreecamIcon, FreecamPalette};
-use crate::widgets::{BarButton, BarDraw};
 
 /// The bar's buttons and read-outs around the scrubber.
 pub struct BarControls;
@@ -28,6 +26,8 @@ impl BarControls {
     // the speed chip's inner padding, and the least gap between two words in a fixed part
     const CHIP_PAD: f32 = 12.0;
     const CHIP_GAP: f32 = 8.0;
+    // the tip label's padding, left and right together, then top and bottom together
+    const TIP_PAD: egui::Vec2 = vec2(16.0, 8.0);
 
     /// Rewind, play and the timecode.
     pub fn transport(
@@ -89,7 +89,13 @@ impl BarControls {
     ) {
         let armed = snapshot.clear_armed && snapshot.point_count > 0;
         let disabled = (snapshot.point_count == 0).then(|| DisabledReason::message(FreecamMessage::NothingToClear));
-        let clear = BarButton::glyph(ui, layout.clear, FreecamUiId::ClearPoints, FreecamIcon::CLEAR, armed, disabled);
+        let clear = BarButton::icon(
+            ui,
+            layout.clear,
+            FreecamUiId::ClearPoints,
+            &IconButton::new(Icon::Clear).on(armed),
+            disabled,
+        );
         if clear.clicked() {
             actions.push(UiAction::ClearPoints);
         }
@@ -147,14 +153,14 @@ impl BarControls {
         let radius = rect.width() * 0.5;
         let accent = <color::Accent as ColorToken>::VALUE;
         let glow = accent.gamma_multiply(0.28 + 0.12 * hover);
-        BarDraw::glow(painter, center + vec2(0.0, 1.0), radius + 2.0 + hover * 2.0, glow);
+        BarDraw::glow(painter, center + egui::Vec2::Y, radius + 2.0 + hover * 2.0, glow);
         let fill = accent
             .lerp_to_gamma(<color::AccentHover as ColorToken>::VALUE, hover)
             .lerp_to_gamma(<color::AccentPress as ColorToken>::VALUE, press);
         painter.circle_filled(center, radius - press * 0.8, fill);
-        painter.circle_stroke(center, radius - 0.5, Stroke::new(1.0, Color32::from_white_alpha(22)));
+        painter.circle_stroke(center, radius - 0.5, Stroke::new(1.0, <color::LineOverlay as ColorToken>::VALUE));
         // the play triangle reads as centred one point right of the true centre
-        let icon = Rect::from_center_size(center + vec2(1.0, 0.0), vec2(radius, radius) * 2.0);
+        let icon = Rect::from_center_size(center + egui::Vec2::X, vec2(radius, radius) * 2.0);
         Icon::Play.paint(painter, icon, IconSize::Regular, <color::OnAccent as ColorToken>::VALUE);
         response.clicked()
     }
@@ -177,7 +183,7 @@ impl BarControls {
     fn point_tag(ui: &Ui, rect: Rect, index: usize, text: &mut BarText) {
         let painter = ui.painter();
         let cy = rect.center().y;
-        let selected = FreecamPalette::POINT_SELECTED;
+        let selected = <color::PathPointSelected as ColorToken>::VALUE;
         Draw::fill(painter, rect, Corner::Control, selected.gamma_multiply(0.12));
         Draw::stroke(painter, rect, Corner::Control, selected.gamma_multiply(0.45));
         let mark =
@@ -198,7 +204,7 @@ impl BarControls {
         let painter = ui.painter();
         let words = UiText::resolve(ui.ctx(), text);
         let galley = Draw::galley(painter, &words, Self::HINT, <color::Text as ColorToken>::VALUE, TextFit::Line);
-        let size = galley.size() + vec2(16.0, 8.0);
+        let size = galley.size() + Self::TIP_PAD;
         let rect = Rect::from_min_size(pos2(anchor.x - size.x * 0.5, anchor.y - 12.0 - size.y), size);
         Surface::paint(painter, rect, SurfaceLevel::Raised, Elevation::Floating);
         BarDraw::place_tinted(

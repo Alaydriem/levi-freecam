@@ -7,8 +7,7 @@ use levi_ui::font::FontFace;
 use levi_ui::tokens::rule::Elevation;
 use levi_ui::tokens::{ColorToken, color};
 
-use super::Strip;
-use crate::widgets::BarDraw;
+use super::{BarDraw, Strip};
 
 /// The key legend under the strip: one key cap and one label per row. The words come from freecam-core.
 pub struct Legend;

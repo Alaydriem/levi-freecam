@@ -5,6 +5,8 @@ use amm_core::structs::lease::AcquireOutcome;
 use amm_core::structs::registry::ModIndex;
 use freecam_core::structs::{FreecamAction, FreecamState, StartLeases};
 use freecam_ffi::services::LinkSession;
+use freecam_ui::message::FreecamMessage;
+use levi_i18n::text::Text;
 
 use crate::support::FfiSession;
 
@@ -133,6 +135,19 @@ fn freecam_reads_the_manager_language_when_it_registers() {
     let _session = FfiSession::new();
 
     assert_eq!(FakeTable::with(|state| state.locale_reads), 1);
+}
+
+#[test]
+fn apply_locale_gives_the_layers_the_words_of_the_manager_language() {
+    let session = LinkSession::new(FakeTable::link_without_frame());
+    let english = Text::message(FreecamMessage::AddPoint).resolve(&session.localizer()).into_owned();
+    FakeTable::with(|state| state.locale = "en_XA");
+
+    session.apply_locale();
+
+    let pseudo = Text::message(FreecamMessage::AddPoint).resolve(&session.localizer()).into_owned();
+    assert_eq!(english, "Add point");
+    assert_ne!(pseudo, english, "the layers still have English");
 }
 
 #[test]

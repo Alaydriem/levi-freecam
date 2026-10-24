@@ -1,5 +1,9 @@
+use std::hash::{Hash, Hasher};
+
+use levi_ui::id::IdScope;
+
 /// The egui ids of the freecam views, used with `Id::unique` or `Id::with`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FreecamUiId {
     /// The playback bar's own area.
     PlaybackBar,
@@ -20,4 +24,11 @@ pub enum FreecamUiId {
     /// The play button's hover and press transitions.
     PlayHover,
     PlayPress,
+}
+
+impl Hash for FreecamUiId {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        IdScope::hash_type::<Self, H>(state);
+        std::mem::discriminant(self).hash(state);
+    }
 }

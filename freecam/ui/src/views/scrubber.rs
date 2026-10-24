@@ -1,4 +1,4 @@
-use egui::{Align2, Color32, CursorIcon, Rect, Sense, Stroke, Ui, pos2, vec2};
+use egui::{Align2, CursorIcon, Rect, Sense, Stroke, Ui, pos2, vec2};
 use freecam_core::structs::{UiAction, UiSnapshot};
 use levi_ui::draw::{Corner, Draw};
 use levi_ui::glyph::{Glyph, KeyEased, KeyLook};
@@ -6,10 +6,8 @@ use levi_ui::motion::Motion;
 use levi_ui::tokens::rule::Elevation;
 use levi_ui::tokens::{ColorToken, color};
 
-use super::{BarText, Timecode};
+use super::{BarDraw, BarText, Timecode};
 use crate::id::FreecamUiId;
-use crate::theme::FreecamPalette;
-use crate::widgets::BarDraw;
 
 /// The scrubber: point marks on a line and the playhead. A drag or a click on the line scrubs; a click on a mark
 /// selects that point.
@@ -106,14 +104,15 @@ impl Scrubber {
             let lit = Motion::flag(ui.ctx(), id.with(FreecamUiId::MarkLit), highlighted == Some(index));
             let painter = ui.painter();
             let look = if selected { KeyLook::Selected } else { KeyLook::Rest };
-            let fill = FreecamPalette::POINT.lerp_to_gamma(FreecamPalette::POINT_SELECTED, lit);
+            let fill = <color::PathPoint as ColorToken>::VALUE
+                .lerp_to_gamma(<color::PathPointSelected as ColorToken>::VALUE, lit);
             let mark =
                 Rect::from_center_size(pos2(x, cy), vec2(KeyEased::SELECTED_HALF, KeyEased::SELECTED_HALF) * 2.0);
             KeyEased { look }.paint(painter, mark, fill);
             if selected || x - last_label >= Self::LABEL_GAP {
                 last_label = x;
                 let color = if selected {
-                    FreecamPalette::POINT_SELECTED
+                    <color::PathPointSelected as ColorToken>::VALUE
                 } else {
                     <color::TextFaint as ColorToken>::VALUE.lerp_to_gamma(<color::TextDim as ColorToken>::VALUE, hover)
                 };
@@ -134,7 +133,7 @@ impl Scrubber {
         }
         let knob = 5.5 + amount * 2.0;
         painter.circle_filled(pos2(x, cy), knob, playhead);
-        painter.circle_stroke(pos2(x, cy), knob, Stroke::new(1.5, Color32::from_white_alpha(200)));
+        painter.circle_stroke(pos2(x, cy), knob, Stroke::new(1.5, <color::KnobRing as ColorToken>::VALUE));
     }
 
     fn time_tip(ui: &Ui, x: f32, bottom: f32, seconds: f32, text: &mut BarText) {

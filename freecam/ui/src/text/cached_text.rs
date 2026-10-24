@@ -6,7 +6,7 @@ use egui::{Color32, FontId, Galley, Painter};
 
 /// One line of text that is laid out again only when its words, its width limit or the font generation change. Each
 /// frame writes the text into a kept buffer and compares it with the text on show, so a frame whose text did not
-/// change lays out no galley. The galley has a placeholder colour; [`super::BarDraw::place_tinted`] paints it in any
+/// change lays out no galley. The galley has a placeholder colour; [`crate::views::BarDraw::place_tinted`] paints it in any
 /// colour.
 pub struct CachedText {
     font: FontId,

@@ -16,6 +16,7 @@ levi-i18n.workspace = true
 [dev-dependencies]
 stats_alloc.workspace = true
 levi-i18n-tool.workspace = true
+levi-rules.workspace = true
 
 [[test]]
 name = "integration"

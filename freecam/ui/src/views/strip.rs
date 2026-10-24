@@ -7,8 +7,8 @@ use levi_ui::text::UiText;
 use levi_ui::tokens::rule::Elevation;
 use levi_ui::tokens::{ColorToken, color};
 
+use super::BarDraw;
 use crate::message::FreecamMessage;
-use crate::widgets::BarDraw;
 
 /// The chip at the top left: title, point count and shot length.
 pub struct Strip;

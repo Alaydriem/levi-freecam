@@ -1,4 +1,4 @@
-use egui::{Area, Color32, Id, Order, Rect, Ui};
+use egui::{Area, Id, Order, Rect, Ui};
 use freecam_core::structs::{UiAction, UiSnapshot};
 use levi_ui::draw::{Corner, Draw};
 use levi_ui::icon::Icon;
@@ -7,10 +7,9 @@ use levi_ui::tokens::rule::Elevation;
 use levi_ui::tokens::{ColorToken, color};
 use levi_ui::widget::IconButton;
 
-use super::{BarControls, BarLayout, BarText, Scrubber};
+use super::{BarButton, BarControls, BarDraw, BarLayout, BarText, Scrubber};
 use crate::id::FreecamUiId;
 use crate::message::FreecamMessage;
-use crate::widgets::{BarButton, BarDraw};
 
 /// The playback bar: a floating pill at the bottom centre, shown in bar mode while no path plays.
 pub struct PlaybackBar;
@@ -69,7 +68,14 @@ impl PlaybackBar {
         let painter = ui.painter();
         let rect = layout.bar;
         let fill = <color::BgPanel as ColorToken>::VALUE.gamma_multiply(0.92);
-        Draw::surface(painter, rect, Corner::Panel, fill, Some(Color32::from_white_alpha(20)), Elevation::Floating);
+        Draw::surface(
+            painter,
+            rect,
+            Corner::Panel,
+            fill,
+            Some(<color::LineOverlay as ColorToken>::VALUE),
+            Elevation::Floating,
+        );
         let cy = rect.center().y;
         let (top, bottom) = (cy - Self::DIVIDER_REACH, cy + Self::DIVIDER_REACH);
         let line = <color::LineStrong as ColorToken>::VALUE;

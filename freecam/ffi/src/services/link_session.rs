@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::sync::Arc;
 
 use amm_abi::types::AmmStatus;
 use amm_client::link::{EventDrain, ManagerLink};
@@ -9,6 +10,7 @@ use amm_core::structs::lease::AcquireOutcome;
 use freecam_core::config::FreecamConfig;
 use freecam_core::structs::StartLeases;
 use freecam_ui::runtime::FreecamLocale;
+use levi_i18n::localize::Localizer;
 
 // freecam's link to the mod manager, on the game thread only: the frame's events, the flight leases and the cursor.
 //
@@ -40,6 +42,11 @@ impl LinkSession {
     pub fn apply_locale(&self) {
         let code = self.link.locale().unwrap_or_default();
         self.link.set_localizer(FreecamLocale::localizer(&code));
+    }
+
+    // the localizer the frame's layers draw freecam's words with now
+    pub fn localizer(&self) -> Arc<Localizer> {
+        self.link.localizer()
     }
 
     // the events queued since the last frame, up to DRAIN_LIMIT

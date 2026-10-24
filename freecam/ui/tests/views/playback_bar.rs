@@ -1,7 +1,8 @@
 use egui::{Pos2, Rect, pos2, vec2};
 use freecam_core::structs::{ToastKind, UiAction, UiSnapshot};
-use freecam_ui::views::{BarLayout, Scrubber, Toast};
+use freecam_ui::views::{BarLayout, ScreenshotToast, Scrubber};
 use levi_i18n::localize::Localizer;
+use levi_ui::icon::{Icon, IconShape};
 
 use crate::support::ui_fixture::{FrameResult, UiEvent, UiFixture};
 
@@ -132,6 +133,18 @@ fn clear_points_is_a_two_click_arm() {
 }
 
 #[test]
+fn clear_points_paints_the_levi_ui_clear_icon() {
+    let mut fixture = bar(None);
+    let IconShape::Font(code) = Icon::Clear.shape() else { panic!("the clear icon is a font glyph") };
+    let clear = layout().clear;
+
+    let texts = fixture.texts();
+
+    let painted = texts.iter().any(|(text, rect)| *text == code.to_string() && clear.contains(rect.center()));
+    assert!(painted, "no clear icon in {clear:?}: {texts:?}");
+}
+
+#[test]
 fn clear_points_is_disabled_with_zero_points() {
     let mut fixture = UiFixture::new().cursor_mode();
     fixture.snapshot.point_count = 0;
@@ -239,10 +252,13 @@ fn toast_draws_file_name() {
     broken.toast_file[0] = 0xFF;
     let english = Localizer::english();
 
-    assert_eq!(Toast::message(&saved, &english).as_deref(), Some("Screenshot saved: freecam-20261020-101010.png"));
-    assert_eq!(Toast::message(&failed, &english).as_deref(), Some("Screenshot failed"));
-    assert_eq!(Toast::message(&broken, &english).as_deref(), Some("Screenshot saved: "));
-    assert_eq!(Toast::message(&UiSnapshot::default(), &english), None);
+    assert_eq!(
+        ScreenshotToast::message(&saved, &english).as_deref(),
+        Some("Screenshot saved: freecam-20261020-101010.png")
+    );
+    assert_eq!(ScreenshotToast::message(&failed, &english).as_deref(), Some("Screenshot failed"));
+    assert_eq!(ScreenshotToast::message(&broken, &english).as_deref(), Some("Screenshot saved: "));
+    assert_eq!(ScreenshotToast::message(&UiSnapshot::default(), &english), None);
 
     let toast_band = |out: &FrameResult| {
         let top = layout().bar.top();

@@ -1,7 +1,7 @@
 use egui::{Context, Rect, Ui};
 use freecam_core::structs::{UiAction, UiLegend, UiSnapshot};
 
-use crate::views::{BarText, Legend, PlaybackBar, Strip, Toast};
+use crate::views::{BarText, Legend, PlaybackBar, ScreenshotToast, Strip};
 
 /// The freecam views in one egui pass that the caller runs, as the mod manager runs a layer: the theme and the fonts
 /// are the context's. It paints the strip, the legend, the playback bar and the toast, and pushes what the user clicked.
@@ -58,7 +58,7 @@ impl FreecamUi {
         let legend_rect = Legend::show(ui, legend, snapshot.cursor_mode);
         bar_text.begin(ui.ctx());
         let bar = PlaybackBar::show(ui, snapshot, bar_text, actions);
-        let toast = Toast::show(ui, snapshot, bar_text);
+        let toast = ScreenshotToast::show(ui, snapshot, bar_text);
         // by position, not by layer: the bar's own area sits above this root Ui
         let pointer = ui.ctx().pointer_hover_pos();
         let over = pointer.is_some_and(|at| [strip, legend_rect, bar].into_iter().any(|rect| rect.contains(at)));

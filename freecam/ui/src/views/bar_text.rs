@@ -4,7 +4,7 @@ use levi_ui::draw::{TextStyle, TypeSize};
 use levi_ui::font::FontFace;
 
 use super::PointLabels;
-use crate::widgets::{CachedText, FontWatch};
+use crate::text::{CachedText, FontWatch};
 
 /// The bar's and the toast's changing text, kept between frames. A read-out is laid out again only when its words
 /// or the fonts change, so a frame with the same values and the same language allocates no galley.

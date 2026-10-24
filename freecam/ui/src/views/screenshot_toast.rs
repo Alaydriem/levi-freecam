@@ -9,15 +9,13 @@ use levi_ui::text::UiLocale;
 use levi_ui::tokens::rule::Elevation;
 use levi_ui::tokens::{ColorToken, color};
 
-use super::{BarLayout, BarText};
+use super::{BarDraw, BarLayout, BarText};
 use crate::message::FreecamMessage;
-use crate::theme::FreecamPalette;
-use crate::widgets::BarDraw;
 
 /// The screenshot message above the bar.
-pub struct Toast;
+pub struct ScreenshotToast;
 
-impl Toast {
+impl ScreenshotToast {
     const HEIGHT: f32 = 30.0;
     const GAP_ABOVE_BAR: f32 = 12.0;
 
@@ -74,7 +72,7 @@ impl Toast {
             Elevation::Flat,
         );
         let dot_color = if snapshot.toast == ToastKind::Saved {
-            FreecamPalette::POINT_SELECTED
+            <color::PathPointSelected as ColorToken>::VALUE
         } else {
             <color::Playhead as ColorToken>::VALUE
         };

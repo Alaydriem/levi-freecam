@@ -42,7 +42,10 @@ run = "cargo run -q -p freecam-ui --example freecam_i18n_extract -- --check"
 [tasks."i18n:pseudo"]
 description = "Writes the en_XA pseudo-locale pack of freecam.pot into freecam/ui/i18n/packs/en_XA.json"
 dir = "{{config_root}}"
-run = "cargo run -q --manifest-path ../levi-crates/Cargo.toml -p levi-i18n-tool -- pseudo freecam/ui/i18n/freecam.pot freecam/ui/i18n/packs/en_XA.json"
+run = [
+  "cargo install -q --locked --git https://github.com/Alaydriem/levi-crates --tag v1.0.0 levi-i18n-tool",
+  "levi-i18n-tool pseudo freecam/ui/i18n/freecam.pot freecam/ui/i18n/packs/en_XA.json",
+]
 
 [tasks.header]
 description = "Regenerates shim/include/levi_freecam.h from the freecam-ffi crate"
